@@ -59,6 +59,24 @@ class DeploymentHealthTest extends TestCase
         Http::assertNotSent(fn ($request) => $request->url() === 'http://ssr.test/health');
     }
 
+    public function test_vps_storage_probe_preserves_existing_images(): void
+    {
+        $this->mockHealthyServices();
+        config(['listings.images_disk' => 'listing_images']);
+        Storage::fake('listing_images');
+        Storage::disk('listing_images')->put('existing.webp', 'preserve');
+        $this->artisan('deploy:health --storage')->assertSuccessful();
+        $this->assertSame(['existing.webp'], Storage::disk('listing_images')->allFiles());
+    }
+
+    public function test_storage_probe_rejects_a_public_disk_without_writing_to_it(): void
+    {
+        $this->mockHealthyServices();
+        config(['listings.images_disk' => 'public']);
+        Storage::shouldReceive('disk')->never();
+        $this->artisan('deploy:health --storage')->assertFailed();
+    }
+
     public function test_failures_do_not_print_credentials(): void
     {
         DB::shouldReceive('select')->once()->andThrow(new \RuntimeException('password=DO-NOT-PRINT'));

@@ -6,16 +6,25 @@ Keep the complete uploaded or cloned project checkout in **`/var/www/html/second
 
 Point your domain at the VPS and allow ports 80/443. Nginx serves only `/var/www/html/secondhand/public`. The initial domain is **secondhand.webostics.com**.
 
-Supply your private R2/S3 bucket and transactional SMTP credentials once:
+Keep settings in the project's root `.env`. If it already exists, edit it; otherwise copy the production example:
 
 ```bash
 cd /var/www/html/secondhand
-sudo install -m 600 deploy/production.env.example /root/secondhand-production.env
-sudo nano /root/secondhand-production.env
-sudo bash deploy.sh --env-file /root/secondhand-production.env
+# Only when .env does not already exist:
+sudo install -m 600 deploy/production.env.example .env
+sudo nano .env
+sudo chown root .env
+sudo chmod 600 .env
+sudo bash deploy.sh
 ```
 
-Edit the example before running deployment. These external accounts cannot be created automatically. Use a private bucket, disable public bucket access and verify the email sender with your provider. For AWS S3, use the bucket region and omit `AWS_ENDPOINT`; for R2, use region `auto` and your account's HTTPS S3 endpoint. Environment files are read as data, never executed as shell commands.
+Set `LISTING_IMAGES_DISK=listing_images` for private photos on this VPS at `storage/app/listing-images`, outside `public/`. No AWS credentials or paid storage account are required. The existing authorized image routes and WebP processing apply to VPS storage too. Do not create a public storage link for these images.
+
+For your existing Gmail SMTP account, set `MAIL_MAILER=smtp`, `MAIL_HOST=smtp.gmail.com`, `MAIL_PORT=465`, `MAIL_SCHEME=smtps`, and your username, new app password and sender address. The older `MAIL_ENCRYPTION=ssl` setting is also accepted and converted to `MAIL_SCHEME=smtps`. `MAIL_FROM_NAME="${APP_NAME}"` is resolved to the application name without executing other substitutions. Passwords remain in your protected `.env`; never commit them. Deployment verifies SMTP authentication; test actual password-reset delivery before launch.
+
+Deployment reads `.env` automatically on every run, preserves `APP_KEY`, and writes the final production configuration back to the same file with root ownership and read access for the app's group only (mode 640). It manages application URL/debug/security settings and its database/Redis/search ports and credentials, overriding local development values. Unknown settings produce an error instead of executing shell text. `--env-file FILE` remains an optional alternative for importing settings.
+
+Cloud storage is optional: explicitly set `LISTING_IMAGES_DISK=s3` and configure the commented AWS fields in the example. For AWS S3, use the bucket region and omit `AWS_ENDPOINT`; for R2, use region `auto` and your HTTPS S3 endpoint. Keep the bucket private. Existing cloud deployments retain their disk. Switching the disk for new uploads does not move old images; retain their storage credentials until the files and database references have been migrated.
 
 ## Updates and domain changes
 
@@ -28,9 +37,8 @@ sudo bash deploy.sh
 # Deploy with a different domain, then remember it for later runs.
 sudo bash deploy.sh --domain secondhand.om.pk
 
-# Optional read-only checks, or change mail/storage settings.
+# Optional read-only checks. Edit root .env to change mail/storage settings.
 sudo bash deploy.sh --check
-sudo bash deploy.sh --env-file /root/secondhand-production.env
 ```
 
 `--email you@example.com` optionally supplies and remembers a Certbot contact address. Without one, certificate registration is non-interactive without an email. Use `--help` for the available options.
@@ -55,6 +63,7 @@ Deployment uses a short maintenance window for migrations and replacing applicat
 - `/var/log/secondhand-deploy.log`: root-only, redacted command details.
 - `/etc/secondhand/state.json`: root-only saved domain, ports and credentials; keep a protected copy.
 - `/var/www/html/secondhand/storage`: persistent application storage/logs.
+- `/var/www/html/secondhand/storage/app/listing-images`: private listing and profile images; include this directory in off-server backups.
 - `/var/www/secondhand/backups`: protected pre-migration PostgreSQL dumps; copy off the VPS and manage retention.
 - `/var/lib/secondhand`: database, Redis and search data.
 
@@ -62,6 +71,6 @@ If a deployment is forcibly killed or the VPS loses power, inspect the log and r
 
 ## Moving to another VPS and validation
 
-Use a new Ubuntu VPS, preserve the existing `APP_KEY` in your production settings and keep the private image bucket. Deploy once to initialize local services, then stop writes/workers, transfer a protected database dump and restore it into the new application's database using its saved port. Use `pg_restore --clean --if-exists --no-owner --no-privileges --role=secondhand` against **the new database only**, through the app's `/run/secondhand-postgres` socket as the postgres account. Rerun deployment, synchronize/import search with `scout:sync-index-settings` and `scout:import 'App\Models\Listing'`, verify the site, then change DNS. Data and secrets are not automatically copied between VPS providers.
+Use a new Ubuntu VPS and preserve the existing `APP_KEY` and mail/storage settings in its root `.env`. Deploy once to initialize local services, then stop writes/workers, transfer `storage/app/listing-images` and a protected database dump, and restore the dump into the new application's database using its saved port. Restore private image ownership to `secondhand:secondhand`; keep it outside `public/`. If using cloud storage, retain the existing private bucket and credentials. Use `pg_restore --clean --if-exists --no-owner --no-privileges --role=secondhand` against **the new database only**, through the app's `/run/secondhand-postgres` socket as the postgres account. Rerun deployment, synchronize/import search with `scout:sync-index-settings` and `scout:import 'App\Models\Listing'`, verify the site, then change DNS. Data and secrets are not automatically copied between VPS providers. Pre-migration backups cover PostgreSQL only; daily off-server database and image backups, plus a tested restore, remain launch requirements.
 
-Local verification passed: Bash syntax, ShellCheck, 28 mocked CLI/safety checks and 11 configuration tests. The manual deployment workflow provides disposable Ubuntu smoke scenarios for fresh/shared servers, dependency reuse, private-port conflicts, repeat deployment, certificates, domain changes and a Horizon WebP job. Certificate/storage/mail fixtures do not prove real provider behavior. Native Ubuntu execution, actual reboot, real ACME/R2/SMTP, real email delivery and off-server backup restore testing remain pending before launch.
+Local verification passed: Bash syntax, ShellCheck, 30 mocked CLI/safety checks, 14 configuration tests, PHPStan and 24 deployment health/image tests (136 assertions). Coverage includes importing the root Laravel `.env`, Gmail SSL configuration, private VPS WebP uploads and rejecting public image storage. The manual deployment workflow provides disposable Ubuntu smoke scenarios for fresh/shared servers, dependency reuse, private-port conflicts, repeat deployment, certificates, domain changes and a Horizon WebP job. Certificate/storage/mail fixtures do not prove real provider behavior. Native Ubuntu execution, actual reboot, real ACME/cloud/SMTP, real email delivery and off-server backup restore testing remain pending before launch.

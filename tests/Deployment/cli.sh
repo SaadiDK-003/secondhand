@@ -53,7 +53,7 @@ pass 'check mode does not create deployment state or install packages'
     BASE="$TEST_DIR/in-place-support"; APP="$TEST_DIR/in-place-checkout"; SOURCE="$APP"
     CONFIG="$TEST_DIR/in-place-config"; STATE="$CONFIG/state.json"; DATA="$TEST_DIR/in-place-data"
     mkdir -p "$APP/.git" "$APP/storage/app/private"
-    touch "$APP/artisan" "$APP/composer.lock" "$APP/package-lock.json"
+    touch "$APP/artisan" "$APP/composer.lock" "$APP/package-lock.json" "$APP/.env"
     printf 'keep Git metadata\n' > "$APP/.git/config"
     printf 'keep private uploads\n' > "$APP/storage/app/private/image"
     before=$(sha256sum "$APP/.git/config" "$APP/storage/app/private/image")
@@ -64,15 +64,38 @@ pass 'check mode does not create deployment state or install packages'
     [[ $(sha256sum "$APP/.git/config" "$APP/storage/app/private/image") == "$before" ]]
     [[ ! -e "$CONFIG" && "$DOMAIN" == secondhand.webostics.com ]]
 )
-pass 'first deployment accepts its live checkout without moving Git or uploads'
+pass 'first deployment accepts its root .env without moving Git or uploads'
 
 (
     CHECK=true; DOMAIN=''; ENV_FILE=''; CONTACT_EMAIL=''
     APP="$TEST_DIR/in-place-checkout"; SOURCE="$APP"
     CONFIG="$TEST_DIR/unmanaged-config"; STATE="$CONFIG/state.json"; DATA="$TEST_DIR/unmanaged-data"
-    touch "$APP/.env"
+    mkdir -p "$DATA/postgres"
+    touch "$DATA/postgres/PG_VERSION"
     check_os() { :; }
-    expect_failure 'existing environment without deployment credentials is protected' preflight
+    expect_failure 'existing service data without deployment credentials is protected' preflight
+)
+passed=$((passed + 1))
+
+(
+    ENV_FILE=''; DOMAIN=example.com; APP="$TEST_DIR/root-env"; STATE="$TEST_DIR/missing-state"
+    mkdir -p "$APP"; touch "$APP/.env"
+    stat() {
+        case "$2" in '%u') printf '0';; '%a') printf '640';; '%G') printf 'secondhand';; esac
+    }
+    python3() { printf '%s\n' "$*" > "$TEST_DIR/env-args"; }
+    validate_input
+    [[ "$ENV_FILE" == "$APP/.env" ]]
+    grep -q -- '--input' "$TEST_DIR/env-args"
+)
+pass 'protected root .env is read automatically on repeat deployments'
+
+(
+    ENV_FILE="$TEST_DIR/root-env/.env"; DOMAIN=example.com
+    stat() {
+        case "$2" in '%u') printf '0';; '%a') printf '644';; '%G') printf 'root';; esac
+    }
+    expect_failure 'world-readable production environment is rejected' validate_input
 )
 passed=$((passed + 1))
 

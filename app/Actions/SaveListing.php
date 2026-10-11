@@ -10,6 +10,7 @@ use App\Jobs\ProcessListingImage;
 use App\Models\Listing;
 use App\Models\ListingImage;
 use App\Models\User;
+use App\Support\PrivateImageStorage;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -31,8 +32,8 @@ class SaveListing
     public function handle(User $user, array $data, array $uploads, array $removeIds = [], ?Listing $listing = null): Listing
     {
         $disk = config('listings.images_disk');
-        if (app()->isProduction() && config('filesystems.disks.'.$disk.'.driver') !== 's3') {
-            throw new RuntimeException('Production listing images require private S3/R2 storage.');
+        if (app()->isProduction() && ! PrivateImageStorage::isConfigured()) {
+            throw new RuntimeException('Production listing images require private VPS or S3/R2 storage.');
         }
         $staged = [];
         try {

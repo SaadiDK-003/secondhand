@@ -31,7 +31,7 @@ The [design and performance review](design-and-performance-review.md) records th
 - [x] Implement the selected native Ubuntu 24.04 deployment method, defaulting to `secondhand.webostics.com` with optional domain overrides. See [deployment instructions](deployment.md). The current Compose stack remains for development.
 - [ ] Provision the actual VPS/region and run the prepared disposable Ubuntu VM scenarios on amd64/arm64, including a real reboot. Local syntax/mock tests do not validate package/service integration.
 - [ ] Configure HTTPS, Cloudflare DNS/CDN and appropriate cache rules. Authenticated HTML and authorized image responses must not enter shared public caches.
-- [ ] Configure PostgreSQL, Redis sessions/cache/queues and private R2/S3 image storage with least-privilege credentials; verify uploads, access checks, cleanup and delivery against those real services.
+- [ ] Configure PostgreSQL, Redis sessions/cache/queues and private VPS image storage (or optional private R2/S3); verify uploads, access checks and cleanup on the deployed stack. Include VPS photos in off-server backups and restore testing.
 - [x] Add Horizon with confirmed administrator/2FA authorization tests, configurable SSR ports and native systemd supervision/scheduling templates.
 - [ ] Verify supervised processes, Horizon jobs/dashboard and every-minute scheduling on the deployed Ubuntu stack.
 - [ ] Configure a transactional email provider and test password reset delivery. Log mail is development-only.

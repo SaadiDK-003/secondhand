@@ -3,6 +3,7 @@
 namespace Tests\Feature\Marketplace;
 
 use App\Actions\DeleteAccount;
+use App\Actions\UpdateProfilePhoto;
 use App\Enums\ListingStatus;
 use App\Jobs\DeleteProfilePhoto;
 use App\Models\Listing;
@@ -11,6 +12,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class ProfilePhotoTest extends TestCase
@@ -57,6 +59,33 @@ class ProfilePhotoTest extends TestCase
         $this->assertNull($user->fresh()->profile_photo_path);
         Queue::assertPushed(DeleteProfilePhoto::class, fn ($job) => $job->path === $second);
         $this->get('/sellers/'.$user->id.'/photo')->assertNotFound();
+    }
+
+    public function test_production_photo_upload_accepts_private_vps_storage(): void
+    {
+        $this->app->detectEnvironment(fn () => 'production');
+        $user = User::factory()->create();
+        app(UpdateProfilePhoto::class)->handle($user, UploadedFile::fake()->image('portrait.png', 100, 100));
+        $user->refresh();
+        $this->assertSame('listing_images', $user->profile_photo_disk);
+        $bytes = Storage::disk('listing_images')->get($user->profile_photo_path);
+        $this->assertSame('image/webp', getimagesizefromstring($bytes)['mime']);
+    }
+
+    public function test_production_photo_upload_rejects_public_storage(): void
+    {
+        $this->app->detectEnvironment(fn () => 'production');
+        config(['listings.images_disk' => 'public']);
+        Storage::fake('public');
+        $user = User::factory()->create();
+        try {
+            app(UpdateProfilePhoto::class)->handle($user, UploadedFile::fake()->image('portrait.jpg', 100, 100));
+            $this->fail('Public storage was accepted.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('photo', $exception->errors());
+        }
+        $this->assertNull($user->fresh()->profile_photo_path);
+        $this->assertSame([], Storage::disk('public')->allFiles());
     }
 
     public function test_guests_and_invalid_files_cannot_upload(): void

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Marketplace;
 
+use App\Actions\SaveListing;
 use App\Enums\ListingStatus;
 use App\Jobs\DeleteListingImageFiles;
 use App\Jobs\ProcessListingImage;
@@ -14,6 +15,7 @@ use App\Services\ListingImageProcessor;
 use App\Services\ListingPresenter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -134,5 +136,32 @@ class ListingImageTest extends TestCase
         Storage::disk('listing_images')->put('photo/original', UploadedFile::fake()->image('photo.'.$extension, $width, $height)->get());
 
         return Listing::factory()->create()->images()->create(['disk' => 'listing_images', 'directory' => 'photo', 'original_path' => 'photo/original']);
+    }
+
+    public function test_production_listing_upload_uses_private_vps_storage_and_webp_processing(): void
+    {
+        $this->app->detectEnvironment(fn () => 'production');
+        Queue::fake();
+        $listing = Listing::factory()->create();
+        $saved = app(SaveListing::class)->handle($listing->user, $listing->getAttributes(),
+            [UploadedFile::fake()->image('item.jpg', 100, 100)], [], $listing);
+        $image = $saved->images()->firstOrFail();
+        $this->assertSame('listing_images', $image->disk);
+        Queue::assertPushed(ProcessListingImage::class);
+        $original = $image->original_path;
+        app(ListingImageProcessor::class)->process($image);
+        $image->refresh();
+        $this->assertSame('image/webp', getimagesizefromstring(Storage::disk($image->disk)->get($image->directory.'/large.webp'))['mime']);
+        Storage::disk($image->disk)->assertMissing($original);
+    }
+
+    public function test_production_listing_upload_rejects_storage_inside_public(): void
+    {
+        $this->app->detectEnvironment(fn () => 'production');
+        config(['filesystems.disks.listing_images.root' => public_path('images')]);
+        $listing = Listing::factory()->create();
+        $this->expectException(RuntimeException::class);
+        app(SaveListing::class)->handle($listing->user, $listing->getAttributes(),
+            [UploadedFile::fake()->image('item.png', 100, 100)], [], $listing);
     }
 }

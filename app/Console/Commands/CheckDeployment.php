@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Support\PrivateImageStorage;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -47,10 +48,10 @@ class CheckDeployment extends Command
         }
         if ($this->option('storage')) {
             $checks['Private image storage'] = function (): void {
-                if (config('listings.images_disk') !== 's3') {
-                    throw new \RuntimeException('Production requires private S3/R2 storage');
+                if (! PrivateImageStorage::isConfigured()) {
+                    throw new \RuntimeException('Private image storage is required');
                 }
-                $disk = Storage::disk('s3');
+                $disk = Storage::disk(config('listings.images_disk'));
                 $path = 'deployment-checks/'.Str::uuid().'.txt';
                 $value = Str::random(32);
                 try {

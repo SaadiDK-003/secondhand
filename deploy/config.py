@@ -19,12 +19,24 @@ ALLOWED_SETTINGS = {
     "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "AWS_BUCKET", "AWS_ENDPOINT",
     "AWS_USE_PATH_STYLE_ENDPOINT", "MAIL_MAILER", "MAIL_SCHEME", "MAIL_HOST",
     "MAIL_PORT", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_FROM_ADDRESS",
-    "MAIL_FROM_NAME", "ASSET_URL", "SENTRY_LARAVEL_DSN", "CERTBOT_EMAIL",
+    "MAIL_FROM_NAME", "MAIL_ENCRYPTION", "LISTING_IMAGES_DISK", "ASSET_URL", "SENTRY_LARAVEL_DSN", "CERTBOT_EMAIL",
 }
+# Accept a normal Laravel .env, but deployment owns these runtime settings.
+MANAGED_SETTINGS = set("""
+APP_ENV APP_DEBUG APP_URL APP_LOCALE APP_FALLBACK_LOCALE APP_FAKER_LOCALE
+APP_MAINTENANCE_DRIVER BCRYPT_ROUNDS LOG_CHANNEL LOG_STACK LOG_LEVEL LOG_DAILY_DAYS
+DB_CONNECTION DB_URL DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD
+SESSION_DRIVER SESSION_CONNECTION SESSION_LIFETIME SESSION_ENCRYPT SESSION_PATH
+SESSION_DOMAIN SESSION_SECURE_COOKIE SESSION_HTTP_ONLY SESSION_SAME_SITE
+BROADCAST_CONNECTION FILESYSTEM_DISK QUEUE_CONNECTION CACHE_STORE REDIS_CLIENT
+REDIS_HOST REDIS_PASSWORD REDIS_PORT REDIS_DB REDIS_CACHE_DB REDIS_PREFIX CACHE_PREFIX
+MEILISEARCH_HOST MEILISEARCH_KEY VITE_APP_NAME SCOUT_DRIVER SCOUT_PREFIX
+INERTIA_SSR_ENABLED INERTIA_SSR_HOST INERTIA_SSR_URL INERTIA_SSR_PORT
+""".split())
 REQUIRED_SETTINGS = {
-    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "AWS_BUCKET",
     "MAIL_HOST", "MAIL_PORT", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_FROM_ADDRESS",
 }
+CLOUD_SETTINGS = {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "AWS_BUCKET"}
 
 
 def domain(value):
@@ -47,7 +59,7 @@ def parse_env(path):
         if not match:
             raise ValueError(f"Invalid environment-file syntax on line {number}.")
         key, value = match.groups()
-        if key not in ALLOWED_SETTINGS:
+        if key not in ALLOWED_SETTINGS | MANAGED_SETTINGS:
             raise ValueError(f"Unsupported setting {key}; use deploy/production.env.example.")
         if key in values:
             raise ValueError(f"Duplicate setting {key}.")
@@ -72,7 +84,12 @@ def parse_env(path):
 
 
 def validate_settings(values):
-    missing = sorted(key for key in REQUIRED_SETTINGS if not values.get(key))
+    disk = values.get("LISTING_IMAGES_DISK", "listing_images")
+    if disk not in {"listing_images", "s3"}:
+        raise ValueError("LISTING_IMAGES_DISK must be listing_images (private VPS storage) or s3.")
+    required = REQUIRED_SETTINGS | (CLOUD_SETTINGS if disk == "s3" else set())
+    missing = sorted(key for key in required if not values.get(key)
+                     or key != "MAIL_PASSWORD" and values[key].lower() in {"null", "empty"})
     if missing:
         raise ValueError("Missing production settings: " + ", ".join(missing))
     if values.get("MAIL_MAILER", "smtp") != "smtp":
@@ -88,7 +105,7 @@ def validate_settings(values):
             raise ValueError(f"{key} must use HTTPS.")
     if values.get("AWS_USE_PATH_STYLE_ENDPOINT", "false") not in {"true", "false"}:
         raise ValueError("AWS_USE_PATH_STYLE_ENDPOINT must be true or false.")
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", values["AWS_BUCKET"]):
+    if values.get("AWS_BUCKET") and not re.fullmatch(r"[A-Za-z0-9._-]+", values["AWS_BUCKET"]):
         raise ValueError("Invalid AWS_BUCKET name.")
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", values["MAIL_FROM_ADDRESS"]):
         raise ValueError("MAIL_FROM_ADDRESS must be a real sender address.")
@@ -137,8 +154,25 @@ def atomic_write(path, text, mode=0o600):
 
 def settings_for(state, input_file):
     values = dict(state.get("settings", {}))
+    # Older deployments used cloud storage exclusively. Keep their existing disk.
+    values.setdefault("LISTING_IMAGES_DISK", "s3" if state else "listing_images")
     if input_file:
-        values.update(parse_env(input_file))
+        imported = {key: value for key, value in parse_env(input_file).items() if key in ALLOWED_SETTINGS}
+        # Match Laravel's removal of one inner quote pair. Our writer uses this
+        # pair to protect reserved words and literal quotes in credentials.
+        for key, value in imported.items():
+            if len(value) >= 2 and value[0] in {'"', "'"} and value[-1] == value[0]:
+                imported[key] = value[1:-1]
+        values.update(imported)
+    encryption = values.pop("MAIL_ENCRYPTION", "").lower()
+    if encryption not in {"", "null", "ssl", "tls"}:
+        raise ValueError("MAIL_ENCRYPTION must be ssl or tls; alternatively use MAIL_SCHEME.")
+    if encryption in {"ssl", "tls"}:
+        values["MAIL_SCHEME"] = "smtps" if encryption == "ssl" else "smtp"
+    elif values.get("MAIL_SCHEME") in {None, "", "null"}:
+        values["MAIL_SCHEME"] = "smtps" if values.get("MAIL_PORT") == "465" else "smtp"
+    if values.get("MAIL_FROM_NAME") == "${APP_NAME}":
+        values["MAIL_FROM_NAME"] = values.get("APP_NAME", "Second Hand")
     validate_settings(values)
     if state and values.get("APP_KEY") != state["settings"]["APP_KEY"]:
         raise ValueError("Changing APP_KEY during deployment is prohibited; preserve it when moving servers.")
@@ -168,7 +202,8 @@ def write_env(state, host, output):
         "REDIS_PREFIX": "secondhand_", "CACHE_PREFIX": "secondhand_cache_",
         "MEILISEARCH_HOST": "http://127.0.0.1:" + str(state["ports"]["meili"]),
         "MEILISEARCH_KEY": state["meili_key"], "SCOUT_DRIVER": "meilisearch", "SCOUT_PREFIX": "secondhand_",
-        "LISTING_IMAGES_DISK": "s3", "INERTIA_SSR_ENABLED": "true", "INERTIA_SSR_HOST": "127.0.0.1",
+        "LISTING_IMAGES_DISK": state["settings"].get("LISTING_IMAGES_DISK", "s3"),
+        "INERTIA_SSR_ENABLED": "true", "INERTIA_SSR_HOST": "127.0.0.1",
         "INERTIA_SSR_PORT": str(state["ports"]["ssr"]),
         "INERTIA_SSR_URL": "http://127.0.0.1:" + str(state["ports"]["ssr"]),
         "VITE_APP_NAME": values["APP_NAME"],

@@ -34,7 +34,8 @@ Usage: sudo bash deploy.sh [--domain HOST] [--env-file FILE] [--email ADDRESS]
 
 Initial domain: secondhand.webostics.com. Subsequent runs retain the saved domain.
 --check performs read-only preflight; it does not install or deploy anything.
-Production credentials: copy deploy/production.env.example outside the checkout.
+Production settings: edit .env in /var/www/html/secondhand (chmod 600 on first setup).
+Images default to private VPS storage; cloud storage is optional.
 EOF
 }
 
@@ -145,9 +146,12 @@ check_nginx_domain() {
 validate_input() {
     [[ -f "$HELPER" ]] || fatal 'Run from the complete project checkout, including deploy/config.py.'
     local -a args=(validate --state "$STATE" --domain "$DOMAIN")
+    if [[ -z "$ENV_FILE" && ( -e "$APP/.env" || -L "$APP/.env" ) ]]; then ENV_FILE="$APP/.env"; fi
     if [[ -n "$ENV_FILE" ]]; then
         [[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || fatal 'The production environment file must be a regular file.'
-        [[ $(stat -c '%u' "$ENV_FILE") == 0 && $(stat -c '%a' "$ENV_FILE") == 600 ]] || fatal 'Environment file must be owned by root and chmod 600.'
+        local mode group
+        mode=$(stat -c '%a' "$ENV_FILE"); group=$(stat -c '%G' "$ENV_FILE")
+        [[ $(stat -c '%u' "$ENV_FILE") == 0 && ( "$mode" == 600 || ( "$mode" == 640 && "$group" == "$USER_NAME" ) ) ]] || fatal 'Protect .env first: sudo chown root .env && sudo chmod 600 .env (deployment permits its own app group to read it).'
         args+=(--input "$ENV_FILE")
     fi
     python3 "$HELPER" "${args[@]}"
@@ -162,7 +166,7 @@ preflight() {
     [[ ! -L "$STATE" ]] || fatal 'Deployment state must not be a symlink.'
     if [[ -f "$STATE" ]]; then
         [[ $(stat -c '%u' "$STATE") == 0 && $(stat -c '%a' "$STATE") == 600 ]] || fatal 'Deployment state must be root-owned and chmod 600.'
-    elif [[ -f "$APP/.env" || -L "$APP/.env" ]] || [[ -d "$DATA" && -n $(find "$DATA" -mindepth 1 -print -quit) ]]; then
+    elif [[ -d "$DATA" && -n $(find "$DATA" -mindepth 1 -print -quit) ]]; then
         fatal 'Application data exists without deployment state. Restore its protected credentials/state before deploying.'
     elif [[ -d "$APP" && "$SOURCE" != "$APP" && -n $(find "$APP" -mindepth 1 -maxdepth 1 ! -name storage -print -quit) ]]; then
         fatal 'The target directory already exists. Run deploy.sh from that checkout or restore its deployment state.'
@@ -753,6 +757,8 @@ install_prepared_app() {
         --exclude='/.tools' --exclude='/.starter' --exclude='/.agents' --exclude='/dumps' --exclude='/backups' \
         --exclude='/deploy/state.json' --exclude='/deploy/success' \
         "$STAGING/" "$APP/"
+    # rsync excludes environment files: install only the validated runtime .env.
+    install -o root -g "$USER_NAME" -m 640 "$STAGING/.env" "$APP/.env"
     find "$APP" \( -path "$APP/.git" -o -path "$APP/storage" -o -path "$APP/.tools" \
         -o -path "$APP/.starter" -o -path "$APP/.agents" -o -path "$APP/dumps" -o -path "$APP/backups" \) \
         -prune -o -type f -exec chmod 640 {} + -o -type d -exec chmod 750 {} +
@@ -882,7 +888,7 @@ main() {
     fi
     [[ $(getent passwd "$USER_NAME" | cut -d: -f6) == "$BASE/shared/home" && $(id -u "$USER_NAME") != 0 ]] || fatal 'An unrelated account uses the secondhand username.'
     install -d -o "$USER_NAME" -g "$USER_NAME" -m 700 "$BASE/shared/home" "$BASE/shared/composer"
-    install -d -o "$USER_NAME" -g "$USER_NAME" -m 750 "$APP/storage" "$APP/storage/app/private" "$APP/storage/framework/cache/data" "$APP/storage/framework/sessions" "$APP/storage/framework/views" "$APP/storage/logs"
+    install -d -o "$USER_NAME" -g "$USER_NAME" -m 750 "$APP/storage" "$APP/storage/app/private" "$APP/storage/app/listing-images" "$APP/storage/framework/cache/data" "$APP/storage/framework/sessions" "$APP/storage/framework/views" "$APP/storage/logs"
     chown -R "$USER_NAME:$USER_NAME" "$APP/storage"
     chmod 750 "$CONFIG"; chown root:"$USER_NAME" "$CONFIG"
     snapshot_configs

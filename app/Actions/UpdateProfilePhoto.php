@@ -6,6 +6,7 @@ namespace App\Actions;
 
 use App\Jobs\DeleteProfilePhoto;
 use App\Models\User;
+use App\Support\PrivateImageStorage;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -21,7 +22,7 @@ class UpdateProfilePhoto
         $disk = config('listings.images_disk');
         $path = null;
         if ($photo) {
-            if (app()->isProduction() && config('filesystems.disks.'.$disk.'.driver') !== 's3') {
+            if (app()->isProduction() && ! PrivateImageStorage::isConfigured()) {
                 throw ValidationException::withMessages(['photo' => 'Photo storage is not available. Please try again later.']);
             }
             $bytes = $this->encode($photo);

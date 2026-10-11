@@ -27,7 +27,7 @@ class DeploymentConfigurationTests(unittest.TestCase):
                 "db_password": "a" * 64, "redis_password": "b" * 64, "meili_key": "c" * 64,
                 "settings": {"APP_KEY": "base64:" + "a" * 43 + "=", "AWS_ACCESS_KEY_ID": "test",
                              "AWS_SECRET_ACCESS_KEY": "secret", "AWS_DEFAULT_REGION": "auto",
-                             "AWS_BUCKET": "private", "MAIL_HOST": "smtp.test", "MAIL_PORT": "587",
+                             "AWS_BUCKET": "private", "LISTING_IMAGES_DISK": "s3", "MAIL_HOST": "smtp.test", "MAIL_PORT": "587",
                              "MAIL_USERNAME": "user", "MAIL_PASSWORD": "secret",
                              "MAIL_FROM_ADDRESS": "mail@example.com"}}
 
@@ -66,6 +66,46 @@ class DeploymentConfigurationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             config.settings_for(self.state(), path)
 
+    def test_root_laravel_env_uses_vps_storage_and_gmail_ssl_without_cloud_credentials(self):
+        values = config.parse_env(ROOT / '.env.example')
+        values.update(MAIL_MAILER='smtp', MAIL_HOST='smtp.gmail.com', MAIL_PORT='465',
+                      MAIL_USERNAME='sender@example.com', MAIL_PASSWORD='replacement-test-password',
+                      MAIL_ENCRYPTION='ssl', MAIL_FROM_ADDRESS='sender@example.com')
+        path = self.root / 'env'
+        path.write_text(''.join(f'{key}="{value}"\n' for key, value in values.items()))
+        settings = config.settings_for({}, path)
+        self.assertEqual('listing_images', settings['LISTING_IMAGES_DISK'])
+        self.assertEqual('smtps', settings['MAIL_SCHEME'])
+        self.assertEqual('Second Hand', settings['MAIL_FROM_NAME'])
+        self.assertNotIn('DB_PASSWORD', settings)
+        self.assertNotIn('APP_DEBUG', settings)
+        state = self.state() | {'settings': settings}
+        output = self.root / 'runtime'
+        config.write_env(state, 'example.com', output)
+        runtime = config.parse_env(output)
+        self.assertEqual('listing_images', runtime['LISTING_IMAGES_DISK'])
+        self.assertEqual('production', runtime['APP_ENV'])
+        self.assertEqual('false', runtime['APP_DEBUG'])
+        self.assertEqual('smtps', runtime['MAIL_SCHEME'])
+        self.assertEqual(state['db_password'], runtime['DB_PASSWORD'])
+
+    def test_cloud_storage_requires_credentials_and_public_storage_is_rejected(self):
+        settings = {key: value for key, value in self.state()['settings'].items()
+                    if key not in config.CLOUD_SETTINGS}
+        config.validate_settings(settings | {'LISTING_IMAGES_DISK': 'listing_images'})
+        with self.assertRaisesRegex(ValueError, 'AWS_BUCKET'):
+            config.validate_settings(settings)
+        with self.assertRaisesRegex(ValueError, 'LISTING_IMAGES_DISK'):
+            config.validate_settings(settings | {'LISTING_IMAGES_DISK': 'public'})
+
+    def test_legacy_cloud_disk_and_existing_key_survive_root_env_reimport(self):
+        state = self.state()
+        del state['settings']['LISTING_IMAGES_DISK']
+        path = self.root / 'env'
+        config.write_env(state, 'example.com', path)
+        self.assertEqual('s3', config.settings_for(state, path)['LISTING_IMAGES_DISK'])
+        self.assertEqual(state['settings']['APP_KEY'], config.settings_for(state, path)['APP_KEY'])
+
     def test_production_env_uses_persistent_private_ports_and_escapes_secrets(self):
         state = self.state()
         state["settings"]["MAIL_PASSWORD"] = 'literal$HOME "quote" \\ backtick`'
@@ -98,6 +138,14 @@ class DeploymentConfigurationTests(unittest.TestCase):
             output = self.root / 'env'
             config.write_env(state, 'example.com', output)
             self.assertIn('MAIL_PASSWORD="\\"', output.read_text())
+            reimported = config.settings_for(state, output)
+            self.assertEqual(value, reimported['MAIL_PASSWORD'])
+            config.write_env(state | {'settings': reimported}, 'example.com', output)
+            # Canonical SMTP scheme is added on import; subsequent runs are stable.
+            canonical = output.read_bytes()
+            config.write_env(state | {'settings': config.settings_for(state | {'settings': reimported}, output)},
+                             'example.com', output)
+            self.assertEqual(canonical, output.read_bytes())
             if php := os.environ.get('PHP_BINARY'):
                 code = r'''require $argv[2].'/vendor/autoload.php';
                     Dotenv\Dotenv::create(Illuminate\Support\Env::getRepository(), dirname($argv[1]), basename($argv[1]))->load();

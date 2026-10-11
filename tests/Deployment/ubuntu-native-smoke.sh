@@ -63,6 +63,7 @@ printf 'preserved private storage\n' > /var/www/html/secondhand/storage/app/priv
 preserved=$(sha256sum /var/www/html/secondhand/.git/config /var/www/html/secondhand/storage/app/private/preserved.txt)
 cat > "$FIXTURE/production.env" <<'EOF'
 APP_NAME="Second Hand native smoke"
+LISTING_IMAGES_DISK=s3
 AWS_ACCESS_KEY_ID=fixture-key
 AWS_SECRET_ACCESS_KEY=fixture-secret
 AWS_DEFAULT_REGION=us-east-1
