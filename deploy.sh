@@ -18,7 +18,7 @@ OS_RELEASE=/etc/os-release
 DOMAIN='' ENV_FILE='' CONTACT_EMAIL='' CHECK=false
 SUCCESS=false MAINTENANCE=false SNAPSHOT_READY=false
 WORK='' STAGING='' POLICY_CREATED=false PG_CONFIG_BACKUP=''
-APP="$BASE/app"
+APP=/var/www/html/secondhand
 PG_BIN='' MIGRATIONS_STARTED=false
 PHP=/usr/bin/php8.4 NODE='' COMPOSER=''
 MEILI_VERSION=1.54.3
@@ -156,14 +156,16 @@ validate_input() {
 preflight() {
     check_os
     local directory
-    for directory in "$CONFIG" "$BASE" "$DATA" "$RUNTIME" "$APP" "$BASE/shared" "$BASE/backups" "$BASE/shared/storage" "$DATA/postgres" "$DATA/redis" "$DATA/meili"; do
+    for directory in "$CONFIG" "$BASE" "$DATA" "$RUNTIME" "$APP" "$APP/storage" "$BASE/shared" "$BASE/backups" "$DATA/postgres" "$DATA/redis" "$DATA/meili"; do
         [[ ! -L "$directory" ]] || fatal 'Application directories must not be symlinks.'
     done
     [[ ! -L "$STATE" ]] || fatal 'Deployment state must not be a symlink.'
     if [[ -f "$STATE" ]]; then
         [[ $(stat -c '%u' "$STATE") == 0 && $(stat -c '%a' "$STATE") == 600 ]] || fatal 'Deployment state must be root-owned and chmod 600.'
-    elif [[ -e "$APP" ]] || [[ -d "$DATA" && -n $(find "$DATA" -mindepth 1 -print -quit) ]]; then
+    elif [[ -f "$APP/.env" || -L "$APP/.env" ]] || [[ -d "$DATA" && -n $(find "$DATA" -mindepth 1 -print -quit) ]]; then
         fatal 'Application data exists without deployment state. Restore its protected credentials/state before deploying.'
+    elif [[ -d "$APP" && "$SOURCE" != "$APP" && -n $(find "$APP" -mindepth 1 -maxdepth 1 ! -name storage -print -quit) ]]; then
+        fatal 'The target directory already exists. Run deploy.sh from that checkout or restore its deployment state.'
     fi
     [[ ! -e "$CONFIG/in-progress" && ! -e "$BASE/current" && ! -L "$BASE/current" ]] || fatal 'This VPS has an older release-based deployment; migrate it manually before using this simpler script.'
     if [[ -z "$DOMAIN" ]]; then DOMAIN=$(state_get domain); fi
@@ -173,7 +175,7 @@ preflight() {
     check_saved_ports
     check_nginx_domain
     [[ -f "$SOURCE/artisan" && -f "$SOURCE/composer.lock" && -f "$SOURCE/package-lock.json" ]] || fatal 'The project source and lock files are required.'
-    [[ "$SOURCE" != "$APP" && "$SOURCE" != "$APP"/* ]] || fatal 'Run from an uploaded/cloned checkout, separate from /var/www/secondhand/app.'
+    [[ "$SOURCE" != "$APP"/* ]] || fatal 'Run from the project root, not a nested directory inside the live application.'
     validate_input
     log "Preflight passed for https://$DOMAIN."
     if $CHECK; then
@@ -531,11 +533,13 @@ build_app() {
     STAGING=$(mktemp -d "$BASE/.build.XXXXXXXX")
     chown "$USER_NAME:$USER_NAME" "$STAGING"; chmod 755 "$STAGING"
     run_quiet 'Prepare application build' rsync -a --safe-links --chown="$USER_NAME:$USER_NAME" \
-        --exclude='/.git' --exclude='/.env*' --exclude='/.tools' --exclude='/.starter' --exclude='/.agents' \
+        --exclude='/.git' --include='/.env.example' --exclude='/.env*' --exclude='*.env' \
+        --exclude='/.tools' --exclude='/.starter' --exclude='/.agents' --exclude='/dumps' --exclude='/backups' \
+        --exclude='/deploy/state.json' --exclude='/deploy/success' \
         --exclude='/vendor' --exclude='/node_modules' --exclude='/storage' --exclude='/bootstrap/cache/*.php' \
         --exclude='/bootstrap/ssr' --exclude='/public/build' --exclude='/public/hot' --exclude='/public/storage' \
         "$SOURCE/" "$STAGING/"
-    ln -s "$BASE/shared/storage" "$STAGING/storage"
+    ln -s "$APP/storage" "$STAGING/storage"
     python3 "$HELPER" env --state "$WORK/candidate-state.json" --domain "$DOMAIN" --output "$STAGING/.env"
     chown root:"$USER_NAME" "$STAGING/.env"
     install -d -o "$USER_NAME" -g "$USER_NAME" -m 750 "$STAGING/bootstrap/cache"
@@ -742,9 +746,28 @@ backup_database() {
     chmod 600 "$backup"
 }
 
+install_prepared_app() {
+    # Update code in place while retaining Git history, data and local-only files.
+    rsync -a --delete --chown="root:$USER_NAME" \
+        --exclude='/.git' --exclude='/storage' --include='/.env.example' --exclude='/.env.*' --exclude='*.env' \
+        --exclude='/.tools' --exclude='/.starter' --exclude='/.agents' --exclude='/dumps' --exclude='/backups' \
+        --exclude='/deploy/state.json' --exclude='/deploy/success' \
+        "$STAGING/" "$APP/"
+    find "$APP" \( -path "$APP/.git" -o -path "$APP/storage" -o -path "$APP/.tools" \
+        -o -path "$APP/.starter" -o -path "$APP/.agents" -o -path "$APP/dumps" -o -path "$APP/backups" \) \
+        -prune -o -type f -exec chmod 640 {} + -o -type d -exec chmod 750 {} +
+    chmod 755 "$APP"
+    find "$APP/public" -type d -exec chmod 755 {} +
+    find "$APP/public" -type f -exec chmod 644 {} +
+    chmod 640 "$APP/.env"
+    # Git metadata may contain authenticated remotes; keep it private to its owner.
+    if [[ -d "$APP/.git" ]]; then chmod 700 "$APP/.git"; elif [[ -f "$APP/.git" ]]; then chmod 600 "$APP/.git"; fi
+    chown -R "$USER_NAME:$USER_NAME" "$APP/bootstrap/cache"
+}
+
 deploy_app() {
     # Build and certificate failures occur before taking the current site offline.
-    if [[ -f "$APP/artisan" ]]; then
+    if [[ $(state_get seeded) == true && -f "$APP/artisan" ]]; then
         run_quiet 'Enter maintenance mode' artisan "$APP" down --retry=10
     else
         run_quiet 'Enter maintenance mode' artisan "$STAGING" down --retry=10
@@ -762,15 +785,7 @@ deploy_app() {
     fi
     # One fixed application directory; no release archive or rollback machinery.
     install -d -m 755 "$APP"
-    run_quiet 'Install prepared application' rsync -a --delete "$STAGING/" "$APP/"
-    chown -R root:"$USER_NAME" "$APP"
-    find "$APP" -type f -exec chmod 640 {} +
-    find "$APP" -type d -exec chmod 750 {} +
-    chmod 755 "$APP"
-    find "$APP/public" -type d -exec chmod 755 {} +
-    find "$APP/public" -type f -exec chmod 644 {} +
-    chmod 640 "$APP/.env"
-    chown -R "$USER_NAME:$USER_NAME" "$APP/bootstrap/cache"
+    run_quiet 'Install prepared application in place' install_prepared_app
     run_quiet 'Cache production configuration' artisan "$APP" optimize
     run_quiet 'Update search settings' artisan "$APP" scout:sync-index-settings
     if [[ $(state_get seeded) != true ]]; then
@@ -861,13 +876,14 @@ main() {
     trap 'exit 130' INT
     trap 'exit 143' TERM
     touch /var/log/secondhand-deploy.log; chmod 600 /var/log/secondhand-deploy.log
-    install -d -m 755 "$BASE" "$BASE/shared" "$BASE/acme" "$DATA" "$RUNTIME"
+    install -d -m 755 "$BASE" "$BASE/shared" "$BASE/acme" "$DATA" "$RUNTIME" "$APP"
     if ! id "$USER_NAME" >/dev/null 2>&1; then
         useradd --system --user-group --home-dir "$BASE/shared/home" --shell /usr/sbin/nologin "$USER_NAME"
     fi
     [[ $(getent passwd "$USER_NAME" | cut -d: -f6) == "$BASE/shared/home" && $(id -u "$USER_NAME") != 0 ]] || fatal 'An unrelated account uses the secondhand username.'
-    install -d -o "$USER_NAME" -g "$USER_NAME" -m 700 "$BASE/shared/home" "$BASE/shared/composer" "$BASE/shared/storage"
-    install -d -o "$USER_NAME" -g "$USER_NAME" -m 750 "$BASE/shared/storage/app/private" "$BASE/shared/storage/framework/cache/data" "$BASE/shared/storage/framework/sessions" "$BASE/shared/storage/framework/views" "$BASE/shared/storage/logs"
+    install -d -o "$USER_NAME" -g "$USER_NAME" -m 700 "$BASE/shared/home" "$BASE/shared/composer"
+    install -d -o "$USER_NAME" -g "$USER_NAME" -m 750 "$APP/storage" "$APP/storage/app/private" "$APP/storage/framework/cache/data" "$APP/storage/framework/sessions" "$APP/storage/framework/views" "$APP/storage/logs"
+    chown -R "$USER_NAME:$USER_NAME" "$APP/storage"
     chmod 750 "$CONFIG"; chown root:"$USER_NAME" "$CONFIG"
     snapshot_configs
     setup_dependencies

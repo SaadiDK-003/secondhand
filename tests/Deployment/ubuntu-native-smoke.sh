@@ -2,7 +2,7 @@
 # DESTRUCTIVE test fixture setup: run ONLY on a disposable Ubuntu VM.
 set -Eeuo pipefail
 [[ ${SECONDHAND_DISPOSABLE_VM:-} == yes && $EUID == 0 ]] || { printf 'Requires a disposable VM and SECONDHAND_DISPOSABLE_VM=yes\n' >&2; exit 1; }
-[[ ! -e /etc/secondhand && ! -e /var/www/secondhand ]] || { printf 'Refusing a VM with an existing Second Hand deployment\n' >&2; exit 1; }
+[[ ! -e /etc/secondhand && ! -e /var/www/secondhand && ! -e /var/www/html/secondhand ]] || { printf 'Refusing a VM with an existing Second Hand deployment\n' >&2; exit 1; }
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 FIXTURE=/root/secondhand-deploy-fixture
 PROFILE=${DEPLOYMENT_PROFILE:-shared}
@@ -10,8 +10,8 @@ PROFILE=${DEPLOYMENT_PROFILE:-shared}
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq nginx certbot python3 openssl ca-certificates rsync iproute2
-mkdir -p "$FIXTURE/source"
-rsync -a --exclude=.git --exclude=.tools --exclude=node_modules --exclude=vendor --exclude='.env*' "$ROOT/" "$FIXTURE/source/"
+mkdir -p "$FIXTURE" /var/www/html/secondhand
+rsync -a --exclude=.git --exclude=.tools --exclude=node_modules --exclude=vendor --include='.env.example' --exclude='.env*' "$ROOT/" /var/www/html/secondhand/
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$FIXTURE/ca.key" -out "$FIXTURE/ca.crt" -days 3 -subj '/CN=Second Hand disposable VM test CA' >/dev/null 2>&1
 install -m 644 "$FIXTURE/ca.crt" /usr/local/share/ca-certificates/secondhand-test.crt
 update-ca-certificates >/dev/null
@@ -58,6 +58,9 @@ old_php=''
 if [[ -x /usr/bin/php ]]; then old_php=$(readlink -f /usr/bin/php); fi
 old_node=$(command -v node || true)
 site_hash=$(sha256sum /etc/nginx/conf.d/deployment-fixtures.conf)
+git init -q /var/www/html/secondhand
+printf 'preserved private storage\n' > /var/www/html/secondhand/storage/app/private/preserved.txt
+preserved=$(sha256sum /var/www/html/secondhand/.git/config /var/www/html/secondhand/storage/app/private/preserved.txt)
 cat > "$FIXTURE/production.env" <<'EOF'
 APP_NAME="Second Hand native smoke"
 AWS_ACCESS_KEY_ID=fixture-key
@@ -75,7 +78,7 @@ MAIL_PASSWORD=fixture-password
 MAIL_FROM_ADDRESS=hello@example.com
 EOF
 chmod 600 "$FIXTURE/production.env"
-cd "$FIXTURE/source"
+cd /var/www/html/secondhand
 # A foreign HTTP server must cause a read-only failure without being stopped.
 systemctl stop nginx
 python3 -m http.server 80 --bind 127.0.0.1 > "$FIXTURE/foreign-http.log" 2>&1 &
@@ -116,6 +119,8 @@ assert old['settings']['APP_KEY'] == new['settings']['APP_KEY']
 
 PY
 
+[[ $(sha256sum /var/www/html/secondhand/.git/config /var/www/html/secondhand/storage/app/private/preserved.txt) == "$preserved" ]]
+[[ -f /var/www/html/secondhand/.env.example ]]
 # Reuse the certificate; change domain and remember it on later runs.
 bash deploy.sh
 [[ $(wc -l < "$FIXTURE/certbot-calls") == "$calls" ]]
@@ -125,22 +130,23 @@ curl -fsS --resolve changed.secondhand.test.invalid:443:127.0.0.1 https://change
 [[ $(python3 deploy/config.py get --key domain) == changed.secondhand.test.invalid ]]
 
 # Certificate failures leave the existing application and configuration working.
-before=$(sha256sum /var/www/secondhand/app/.env /etc/nginx/conf.d/secondhand.conf)
+before=$(sha256sum /var/www/html/secondhand/.env /etc/nginx/conf.d/secondhand.conf)
 touch "$FIXTURE/fail-certbot"
 if bash deploy.sh --domain bad.secondhand.test.invalid; then exit 1; fi
 rm "$FIXTURE/fail-certbot"
-[[ $(sha256sum /var/www/secondhand/app/.env /etc/nginx/conf.d/secondhand.conf) == "$before" ]]
+[[ $(sha256sum /var/www/html/secondhand/.env /etc/nginx/conf.d/secondhand.conf) == "$before" ]]
 curl -fsS --resolve changed.secondhand.test.invalid:443:127.0.0.1 https://changed.secondhand.test.invalid/up >/dev/null
 
 # Invalid mail settings must fail before maintenance or data changes.
 touch "$FIXTURE/fail-smtp"
 if bash deploy.sh; then exit 1; fi
 rm "$FIXTURE/fail-smtp"
-[[ $(sha256sum /var/www/secondhand/app/.env /etc/nginx/conf.d/secondhand.conf) == "$before" ]]
+[[ $(sha256sum /var/www/html/secondhand/.env /etc/nginx/conf.d/secondhand.conf) == "$before" ]]
 curl -fsS --resolve changed.secondhand.test.invalid:443:127.0.0.1 https://changed.secondhand.test.invalid/login >/dev/null
 
+[[ $(sha256sum /var/www/html/secondhand/.git/config /var/www/html/secondhand/storage/app/private/preserved.txt) == "$preserved" ]]
 # Real Horizon image job against this disposable stack, using fixture private S3.
-cd /var/www/secondhand/app
+cd /var/www/html/secondhand
 SECONDHAND_DISPOSABLE_VM=yes runuser -u secondhand -- /usr/bin/php8.4 tests/Deployment/native-worker.php
 for unit in secondhand-{postgres,redis,meili,ssr,horizon}.service secondhand-scheduler.timer; do
     systemctl is-enabled --quiet "$unit"

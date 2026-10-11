@@ -48,6 +48,34 @@ pass 'help and initial domain'
 )
 pass 'check mode does not create deployment state or install packages'
 
+(
+    CHECK=true; DOMAIN=''; ENV_FILE=''; CONTACT_EMAIL=''
+    BASE="$TEST_DIR/in-place-support"; APP="$TEST_DIR/in-place-checkout"; SOURCE="$APP"
+    CONFIG="$TEST_DIR/in-place-config"; STATE="$CONFIG/state.json"; DATA="$TEST_DIR/in-place-data"
+    mkdir -p "$APP/.git" "$APP/storage/app/private"
+    touch "$APP/artisan" "$APP/composer.lock" "$APP/package-lock.json"
+    printf 'keep Git metadata\n' > "$APP/.git/config"
+    printf 'keep private uploads\n' > "$APP/storage/app/private/image"
+    before=$(sha256sum "$APP/.git/config" "$APP/storage/app/private/image")
+    check_os() { :; }; check_public_ports() { :; }; check_saved_ports() { :; }
+    check_nginx_domain() { :; }; validate_input() { :; }; inspect_requirements() { :; }
+    state_get() { printf ''; }
+    preflight >/dev/null
+    [[ $(sha256sum "$APP/.git/config" "$APP/storage/app/private/image") == "$before" ]]
+    [[ ! -e "$CONFIG" && "$DOMAIN" == secondhand.webostics.com ]]
+)
+pass 'first deployment accepts its live checkout without moving Git or uploads'
+
+(
+    CHECK=true; DOMAIN=''; ENV_FILE=''; CONTACT_EMAIL=''
+    APP="$TEST_DIR/in-place-checkout"; SOURCE="$APP"
+    CONFIG="$TEST_DIR/unmanaged-config"; STATE="$CONFIG/state.json"; DATA="$TEST_DIR/unmanaged-data"
+    touch "$APP/.env"
+    check_os() { :; }
+    expect_failure 'existing environment without deployment credentials is protected' preflight
+)
+passed=$((passed + 1))
+
 for saved in '' saved.example.com; do
     (
         DOMAIN=''; CHECK=true
@@ -83,6 +111,7 @@ pass 'IPv6 listener and reserved ports force a separate private port'
     grep -q 'fastcgi_pass unix:/run/php/secondhand.sock;' "$TEST_DIR/nginx.conf"
     grep -q 'client_max_body_size 128m;' "$TEST_DIR/nginx.conf"
     grep -q 'fastcgi_param HTTPS on;' "$TEST_DIR/nginx.conf"
+    grep -q 'root /var/www/html/secondhand/public;' "$TEST_DIR/nginx.conf"
     if grep -q ':3000' "$TEST_DIR/nginx.conf"; then exit 1; fi
 )
 pass 'Nginx uses the requested domain and dedicated FPM socket'

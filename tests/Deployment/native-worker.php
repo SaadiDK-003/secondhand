@@ -15,7 +15,7 @@ use Illuminate\Support\Str;
 if (PHP_SAPI !== 'cli' || getenv('SECONDHAND_DISPOSABLE_VM') !== 'yes') {
     exit(1);
 }
-$root = '/var/www/secondhand/app';
+$root = '/var/www/html/secondhand';
 require $root.'/vendor/autoload.php';
 $app = require $root.'/bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
