@@ -306,6 +306,16 @@
     }
 }
 
+/* Filament uses a separate stylesheet from the public site's mobile input sizing. */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+    .fi-body input:not([type='checkbox']):not([type='radio']),
+    .fi-body select,
+    .fi-body textarea,
+    .fi-body [contenteditable]:not([contenteditable='false']) {
+        font-size: max(1rem, 16px);
+    }
+}
+
 @media (max-width: 767px) {
     .fi-topbar .sh-marketplace-link {
         display: none;
@@ -330,6 +340,7 @@
         width: 100%;
         min-width: 0;
         min-height: 2.75rem;
+        align-items: center;
     }
 
     .fi-ta-ctn .fi-ta-header-toolbar .fi-ta-search-field input {

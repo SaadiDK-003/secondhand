@@ -210,11 +210,20 @@
     }
 }
 
+/* Keep editable text legible without Safari zooming on focus, including landscape phones. */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+    input:not([type='checkbox']):not([type='radio']),
+    select,
+    textarea,
+    [contenteditable]:not([contenteditable='false']) {
+        font-size: max(1rem, 16px);
+    }
+}
+
 @media (max-width: 639px) {
     input:not([type='checkbox']):not([type='radio']),
     select,
     textarea {
-        font-size: 1rem;
         min-height: 44px;
     }
     button:not([role='checkbox']),
