@@ -25,9 +25,22 @@ class ModerationStats extends StatsOverviewWidget
     {
         Gate::authorize('moderate');
 
+        $pending = Listing::where('status', 'pending')->count();
+        $reports = Report::where('status', 'open')->count();
+
         return [
-            Stat::make('Pending review', Listing::where('status', 'pending')->count())->description('Ads waiting for your decision')->descriptionColor('gray')->icon('heroicon-o-clipboard-document-check')->color('warning')->url(url('/admin/listings?filters[status][value]=pending')),
-            Stat::make('Open reports', Report::where('status', 'open')->count())->description('Help keep the marketplace safe')->descriptionColor('gray')->icon('heroicon-o-flag')->color('danger')->url(url('/admin/reports?filters[status][value]=open')),
+            Stat::make('Pending review', $pending)
+                ->description($pending > 0 ? 'Ads waiting for your decision' : 'All reviews are up to date')
+                ->descriptionColor($pending > 0 ? 'warning' : 'gray')
+                ->icon('heroicon-o-clipboard-document-check')
+                ->extraAttributes(['class' => $pending > 0 ? 'sh-stat-warning' : ''])
+                ->url(url('/admin/listings?filters[status][value]=pending')),
+            Stat::make('Open reports', $reports)
+                ->description($reports > 0 ? 'Reports need your attention' : 'No open reports')
+                ->descriptionColor($reports > 0 ? 'danger' : 'gray')
+                ->icon('heroicon-o-flag')
+                ->extraAttributes(['class' => $reports > 0 ? 'sh-stat-danger' : ''])
+                ->url(url('/admin/reports?filters[status][value]=open')),
             Stat::make('Live listings', Listing::published()->count())->description('Items available to buyers')->descriptionColor('gray')->icon('heroicon-o-shopping-bag')->color('primary')->url(url('/admin/listings')),
             Stat::make('Members', User::count())->description('Registered marketplace accounts')->descriptionColor('gray')->icon('heroicon-o-users')->color('success')->url(url('/admin/users')),
         ];

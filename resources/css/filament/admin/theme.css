@@ -52,6 +52,26 @@
     box-shadow: 0 2px 8px #17365205;
 }
 
+.fi-wi-stats-overview-stat.sh-stat-warning {
+    background: #fffbeb;
+    border: 1px solid #fcd34d;
+}
+
+.fi-wi-stats-overview-stat.sh-stat-danger {
+    background: #fef2f2;
+    border: 1px solid #fca5a5;
+}
+
+.sh-stat-warning .fi-wi-stats-overview-stat-label,
+.sh-stat-warning .fi-wi-stats-overview-stat-value {
+    color: #92400e;
+}
+
+.sh-stat-danger .fi-wi-stats-overview-stat-label,
+.sh-stat-danger .fi-wi-stats-overview-stat-value {
+    color: #991b1b;
+}
+
 .sh-brand {
     display: flex;
     align-items: center;

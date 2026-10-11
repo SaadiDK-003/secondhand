@@ -33,6 +33,27 @@ class ListingsResource extends \Filament\Resources\Resource
         return false;
     }
 
+    public static function getNavigationBadge(): ?string
+    {
+        if (! static::canViewAny()) {
+            return null;
+        }
+
+        $pending = Listing::where('status', ListingStatus::Pending)->count();
+
+        return $pending > 0 ? (string) $pending : null;
+    }
+
+    public static function getNavigationBadgeColor(): string
+    {
+        return 'warning';
+    }
+
+    public static function getNavigationBadgeTooltip(): string
+    {
+        return 'Listings awaiting review';
+    }
+
     public static function table(Table $table): Table
     {
         return $table->defaultSort('updated_at', 'desc')->columns([

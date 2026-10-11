@@ -33,6 +33,27 @@ class ReportsResource extends \Filament\Resources\Resource
         return false;
     }
 
+    public static function getNavigationBadge(): ?string
+    {
+        if (! static::canViewAny()) {
+            return null;
+        }
+
+        $reports = Report::where('status', 'open')->count();
+
+        return $reports > 0 ? (string) $reports : null;
+    }
+
+    public static function getNavigationBadgeColor(): string
+    {
+        return 'danger';
+    }
+
+    public static function getNavigationBadgeTooltip(): string
+    {
+        return 'Open reports awaiting attention';
+    }
+
     public static function table(Table $table): Table
     {
         return $table->defaultSort('created_at', 'desc')->columns([TextColumn::make('id'), TextColumn::make('reporter_id'), TextColumn::make('target_type'), TextColumn::make('target_id'), TextColumn::make('reason'), TextColumn::make('details')->wrap(), TextColumn::make('status')->badge(), TextColumn::make('resolution')->wrap()])->filters([SelectFilter::make('status')->options(['open' => 'Open', 'resolved' => 'Resolved', 'dismissed' => 'Dismissed'])])->recordActions([
