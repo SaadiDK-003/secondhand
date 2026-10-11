@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import subprocess
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("deploy_config", ROOT / "deploy/config.py")
@@ -105,6 +106,92 @@ class DeploymentConfigurationTests(unittest.TestCase):
         config.write_env(state, 'example.com', path)
         self.assertEqual('s3', config.settings_for(state, path)['LISTING_IMAGES_DISK'])
         self.assertEqual(state['settings']['APP_KEY'], config.settings_for(state, path)['APP_KEY'])
+
+    def test_first_run_bootstraps_example_and_asks_only_for_missing_mail_secrets(self):
+        path = self.root / '.env'
+        password = 'test$only "quote" \\ literal'
+        with patch.object(config.sys.stdin, 'isatty', return_value=True), \
+                patch('builtins.input', return_value='sender@example.com') as prompt, \
+                patch.object(config.getpass, 'getpass', return_value=password) as secret:
+            config.bootstrap_env({}, path, ROOT / '.env.example', 'example.com')
+        prompt.assert_called_once_with('MAIL_USERNAME: ')
+        secret.assert_called_once_with('SMTP app password: ')
+        values = config.settings_for({}, path)
+        self.assertEqual('sender@example.com', values['MAIL_FROM_ADDRESS'])
+        self.assertEqual(password, values['MAIL_PASSWORD'])
+        self.assertEqual('smtp.gmail.com', values['MAIL_HOST'])
+        self.assertEqual('smtps', values['MAIL_SCHEME'])
+        self.assertEqual('listing_images', values['LISTING_IMAGES_DISK'])
+        self.assertEqual('production', config.parse_env(path)['APP_ENV'])
+        self.assertEqual('false', config.parse_env(path)['APP_DEBUG'])
+        self.assertRegex(values['APP_KEY'], r'^base64:[A-Za-z0-9+/]{43}=$')
+        before = path.read_bytes()
+        with patch('builtins.input', side_effect=AssertionError('Unexpected repeat prompt')), \
+                patch.object(config.getpass, 'getpass', side_effect=AssertionError('Unexpected repeat password')):
+            config.bootstrap_env({}, path, ROOT / '.env.example', 'example.com')
+        self.assertEqual(before, path.read_bytes())
+        if os.name != 'nt':
+            self.assertEqual(0o600, path.stat().st_mode & 0o777)
+
+    def test_noninteractive_setup_creates_protected_env_without_guessing_mail_credentials(self):
+        path = self.root / '.env'
+        with patch.object(config.sys.stdin, 'isatty', return_value=False):
+            with self.assertRaisesRegex(ValueError, 'MAIL_PASSWORD'):
+                config.bootstrap_env({}, path, ROOT / '.env.example', 'example.com')
+            key = config.parse_env(path)['APP_KEY']
+            with self.assertRaises(ValueError):
+                config.bootstrap_env({}, path, ROOT / '.env.example', 'example.com')
+        self.assertEqual(key, config.parse_env(path)['APP_KEY'])
+
+    def test_missing_env_is_restored_from_state_without_changing_domain_or_credentials(self):
+        path = self.root / '.env'
+        state = self.state()
+        with patch('builtins.input', side_effect=AssertionError('Unexpected prompt')):
+            config.bootstrap_env(state, path, ROOT / '.env.example', 'new.example.com')
+        values = config.parse_env(path)
+        self.assertEqual('https://' + state['domain'], values['APP_URL'])
+        self.assertEqual(state['settings']['APP_KEY'], values['APP_KEY'])
+        self.assertEqual(state['db_password'], values['DB_PASSWORD'])
+        self.assertEqual(state['redis_password'], values['REDIS_PASSWORD'])
+
+    def test_interrupted_password_entry_keeps_generated_key_for_retry(self):
+        path = self.root / '.env'
+        with patch.object(config.sys.stdin, 'isatty', return_value=True), \
+                patch('builtins.input', return_value='sender@example.com'), \
+                patch.object(config.getpass, 'getpass', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                config.bootstrap_env({}, path, ROOT / '.env.example', 'example.com')
+        self.assertRegex(config.parse_env(path)['APP_KEY'], r'^base64:')
+
+    def test_bootstrap_refuses_malformed_env_without_overwriting_it(self):
+        path = self.root / '.env'
+        path.write_text('APP_NAME=example\nPATH=/malicious\n')
+        before = path.read_bytes()
+        with self.assertRaises(ValueError):
+            config.bootstrap_env({}, path, ROOT / '.env.example', 'example.com')
+        self.assertEqual(before, path.read_bytes())
+
+    def test_existing_env_is_adjusted_without_rotating_key_or_switching_live_domain_early(self):
+        state = self.state()
+        path = self.root / '.env'
+        config.write_env(state, state['domain'], path)
+        path.write_text(path.read_text().replace('MAIL_MAILER="smtp"', 'MAIL_MAILER="log"'))
+        config.bootstrap_env(state, path, ROOT / '.env.example', 'new.example.com')
+        values = config.parse_env(path)
+        self.assertEqual('smtp', values['MAIL_MAILER'])
+        self.assertEqual('https://' + state['domain'], values['APP_URL'])
+        self.assertEqual(state['settings']['APP_KEY'], values['APP_KEY'])
+        self.assertEqual(state['db_password'], values['DB_PASSWORD'])
+
+    def test_password_prompt_rejects_newline_injection_without_printing_or_saving_it(self):
+        path = self.root / '.env'
+        with patch.object(config.sys.stdin, 'isatty', return_value=True), \
+                patch('builtins.input', return_value='sender@example.com'), \
+                patch.object(config.getpass, 'getpass', return_value='secret\nAPP_DEBUG=true'):
+            with self.assertRaisesRegex(ValueError, 'Control characters are not allowed in MAIL_PASSWORD'):
+                config.bootstrap_env({}, path, ROOT / '.env.example', 'example.com')
+        self.assertEqual('false', config.parse_env(path)['APP_DEBUG'])
+        self.assertNotIn('secret', path.read_text())
 
     def test_production_env_uses_persistent_private_ports_and_escapes_secrets(self):
         state = self.state()

@@ -99,6 +99,32 @@ pass 'protected root .env is read automatically on repeat deployments'
 )
 passed=$((passed + 1))
 
+(
+    ENV_FILE=''; DOMAIN=example.com; APP="$TEST_DIR/auto-env"; STATE="$TEST_DIR/missing-state"
+    getent() { return 1; }
+    chown() { printf 'chown %s\n' "$*" >> "$TEST_DIR/auto-env-actions"; }
+    chmod() { printf 'chmod %s\n' "$*" >> "$TEST_DIR/auto-env-actions"; }
+    python3() {
+        printf '%s\n' "$*" >> "$TEST_DIR/auto-env-actions"
+        if [[ "$2" == bootstrap ]]; then touch "$ENV_FILE"; fi
+    }
+    validate_input() { printf 'validated\n' >> "$TEST_DIR/auto-env-actions"; }
+    prepare_environment
+    [[ -f "$APP/.env" && "$ENV_FILE" == "$APP/.env" ]]
+    grep -q -- '--template' "$TEST_DIR/auto-env-actions"
+    grep -q 'chown root:root' "$TEST_DIR/auto-env-actions"
+    grep -q 'chmod 600' "$TEST_DIR/auto-env-actions"
+    grep -q 'validated' "$TEST_DIR/auto-env-actions"
+)
+pass 'normal deployment automatically bootstraps and protects the root environment'
+
+(
+    APP="$TEST_DIR/auto-env"; ENV_FILE="$APP/.env"; DOMAIN=example.com
+    stat() { printf '2'; }
+    expect_failure 'automatic permission changes reject hard-linked environment files' prepare_environment
+)
+passed=$((passed + 1))
+
 for saved in '' saved.example.com; do
     (
         DOMAIN=''; CHECK=true

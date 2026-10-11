@@ -5,6 +5,7 @@ import argparse
 import base64
 import json
 import glob
+import getpass
 import os
 from pathlib import Path
 import re
@@ -152,7 +153,7 @@ def atomic_write(path, text, mode=0o600):
             os.unlink(temporary)
 
 
-def settings_for(state, input_file):
+def settings_for(state, input_file, validate=True):
     values = dict(state.get("settings", {}))
     # Older deployments used cloud storage exclusively. Keep their existing disk.
     values.setdefault("LISTING_IMAGES_DISK", "s3" if state else "listing_images")
@@ -173,10 +174,73 @@ def settings_for(state, input_file):
         values["MAIL_SCHEME"] = "smtps" if values.get("MAIL_PORT") == "465" else "smtp"
     if values.get("MAIL_FROM_NAME") == "${APP_NAME}":
         values["MAIL_FROM_NAME"] = values.get("APP_NAME", "Second Hand")
-    validate_settings(values)
+    if validate:
+        validate_settings(values)
     if state and values.get("APP_KEY") != state["settings"]["APP_KEY"]:
         raise ValueError("Changing APP_KEY during deployment is prohibited; preserve it when moving servers.")
     return values
+
+
+def env_text(values):
+    def quote(key, value):
+        if key in {"APP_DEBUG", "SESSION_HTTP_ONLY", "SESSION_SECURE_COOKIE", "SESSION_ENCRYPT",
+                   "AWS_USE_PATH_STYLE_ENDPOINT", "INERTIA_SSR_ENABLED", "SESSION_DOMAIN"}:
+            return value
+        # Match Laravel's string handling, including reserved words and quotes.
+        if not key.startswith("VITE_") and (
+                value.lower() in {"true", "false", "null", "empty", "(true)", "(false)", "(null)", "(empty)"}
+                or len(value) >= 2 and value[0] in {'"', "'"} and value[-1] == value[0]):
+            value = '"' + value + '"'
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$") + '"'
+    return "".join(f"{key}={quote(key, str(value))}\n" for key, value in values.items())
+
+
+def bootstrap_env(state, path, template, host):
+    path = Path(path)
+    if path.is_symlink() or path.exists() and not path.is_file():
+        raise ValueError("The root .env must be a regular file, not a symlink.")
+    if not path.exists() and state:
+        # Restore saved production settings; do not rotate keys or change a live URL.
+        write_env(state, state.get("domain") or host, path)
+        print("[secondhand] Restored root .env from protected deployment settings.")
+        return
+    created = not path.exists()
+    source = template if created else path
+    original = parse_env(source)
+    values = settings_for(state, source, validate=False)
+    previous = values.copy()
+    values["MAIL_MAILER"] = "smtp"
+    if values.get("MAIL_HOST") in {None, "", "null", "127.0.0.1", "localhost"}:
+        values.update(MAIL_HOST="smtp.gmail.com", MAIL_PORT="465", MAIL_SCHEME="smtps")
+    if not state:
+        values["APP_KEY"] = values.get("APP_KEY") or "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
+        original.update(APP_ENV="production", APP_DEBUG="false", APP_URL="https://" + domain(host),
+                        SESSION_SECURE_COOKIE="true")
+    if values.get("MAIL_FROM_ADDRESS") in {None, "", "null", "hello@example.com"}:
+        values["MAIL_FROM_ADDRESS"] = values.get("MAIL_USERNAME", "")
+    missing = [key for key in REQUIRED_SETTINGS if not values.get(key) or values[key].lower() in {"null", "empty"}]
+    if created:
+        atomic_write(path, env_text(original | values))
+        print("[secondhand] Created protected root .env from .env.example.")
+    if missing:
+        if not sys.stdin.isatty():
+            raise ValueError("Root .env is ready. Fill " + ", ".join(sorted(missing))
+                             + " in that file, then rerun sudo bash deploy.sh from a terminal.")
+        print("[secondhand] Enter missing SMTP settings once; the app password is hidden.")
+        for key in ("MAIL_HOST", "MAIL_PORT", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_FROM_ADDRESS"):
+            if key not in missing:
+                continue
+            if key == "MAIL_FROM_ADDRESS" and values.get("MAIL_USERNAME"):
+                values[key] = values["MAIL_USERNAME"]
+                continue
+            value = getpass.getpass("SMTP app password: ") if key == "MAIL_PASSWORD" else input(key + ": ").strip()
+            if any(ord(c) < 32 or ord(c) == 127 for c in value):
+                raise ValueError("Control characters are not allowed in " + key + ".")
+            values[key] = value
+    validate_settings(values)
+    if created or missing or values != previous:
+        # Save the new key/mail details even if a later package/build step fails.
+        atomic_write(path, env_text(original | values))
 
 
 def write_env(state, host, output):
@@ -208,18 +272,7 @@ def write_env(state, host, output):
         "INERTIA_SSR_URL": "http://127.0.0.1:" + str(state["ports"]["ssr"]),
         "VITE_APP_NAME": values["APP_NAME"],
     })
-    def quote(key, value):
-        if key in {"APP_DEBUG", "SESSION_HTTP_ONLY", "SESSION_SECURE_COOKIE", "SESSION_ENCRYPT",
-                   "AWS_USE_PATH_STYLE_ENDPOINT", "INERTIA_SSR_ENABLED", "SESSION_DOMAIN"}:
-            return value
-        # Laravel's env() casts reserved words even after dotenv removes outer quotes.
-        # Preserve these strings (and literal enclosing quotes) with one inner pair.
-        if not key.startswith("VITE_") and (
-                value.lower() in {"true", "false", "null", "empty", "(true)", "(false)", "(null)", "(empty)"}
-                or len(value) >= 2 and value[0] in {'"', "'"} and value[-1] == value[0]):
-            value = '"' + value + '"'
-        return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$") + '"'
-    atomic_write(output, "".join(f"{key}={quote(key, str(value))}\n" for key, value in values.items()), 0o640)
+    atomic_write(output, env_text(values), 0o640)
 
 
 def nginx_directives(text):
@@ -286,9 +339,10 @@ def nginx_readonly(path, host, owned_paths):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=["validate", "init", "get", "env", "commit", "conflicts", "nginx-check", "redact"])
+    parser.add_argument("command", choices=["bootstrap", "validate", "init", "get", "env", "commit", "conflicts", "nginx-check", "redact"])
     parser.add_argument("--state", default="/etc/secondhand/state.json")
     parser.add_argument("--input")
+    parser.add_argument("--template")
     parser.add_argument("--domain")
     parser.add_argument("--output")
     parser.add_argument("--key")
@@ -296,7 +350,9 @@ def main():
     parser.add_argument("--email")
     args = parser.parse_args()
     state = read_state(args.state)
-    if args.command == "validate":
+    if args.command == "bootstrap":
+        bootstrap_env(state, args.input, args.template, domain(args.domain))
+    elif args.command == "validate":
         settings_for(state, args.input)
         if args.domain:
             domain(args.domain)
@@ -348,6 +404,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except (EOFError, KeyboardInterrupt):
+        print("Configuration interrupted; rerun deploy.sh to finish setup.", file=sys.stderr)
+        sys.exit(1)
     except (ValueError, OSError, KeyError, TypeError) as error:
         # Messages are intentionally about keys/structure, not secret values or raw input.
         print("Configuration error: " + str(error), file=sys.stderr)

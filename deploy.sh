@@ -34,7 +34,8 @@ Usage: sudo bash deploy.sh [--domain HOST] [--env-file FILE] [--email ADDRESS]
 
 Initial domain: secondhand.webostics.com. Subsequent runs retain the saved domain.
 --check performs read-only preflight; it does not install or deploy anything.
-Production settings: edit .env in /var/www/html/secondhand (chmod 600 on first setup).
+Creates root .env from .env.example if missing and protects it automatically.
+Missing SMTP credentials are requested once in the terminal (password hidden).
 Images default to private VPS storage; cloud storage is optional.
 EOF
 }
@@ -157,6 +158,27 @@ validate_input() {
     python3 "$HELPER" "${args[@]}"
 }
 
+prepare_environment() {
+    ENV_FILE=${ENV_FILE:-$APP/.env}
+    [[ ! -L "$ENV_FILE" && ( ! -e "$ENV_FILE" || -f "$ENV_FILE" ) ]] || fatal 'Environment file must be a regular file, not a symlink.'
+    if [[ -e "$ENV_FILE" ]]; then
+        [[ $(stat -c '%h' "$ENV_FILE") == 1 ]] || fatal 'Environment file must not have hard links.'
+    elif [[ "$ENV_FILE" != "$APP/.env" ]]; then
+        fatal 'The supplied --env-file does not exist.'
+    else
+        install -d -m 755 "$APP"
+    fi
+    # Keep an existing app's read access while correcting unsafe permissions.
+    local group=root mode=600
+    if getent group "$USER_NAME" >/dev/null; then group=$USER_NAME; mode=640; fi
+    if [[ -f "$ENV_FILE" ]]; then chown "root:$group" "$ENV_FILE"; chmod "$mode" "$ENV_FILE"; fi
+    if [[ "$ENV_FILE" == "$APP/.env" ]]; then
+        python3 "$HELPER" bootstrap --state "$STATE" --input "$ENV_FILE" --template "$SOURCE/.env.example" --domain "$DOMAIN"
+        chown "root:$group" "$ENV_FILE"; chmod "$mode" "$ENV_FILE"
+    fi
+    validate_input
+}
+
 preflight() {
     check_os
     local directory
@@ -180,12 +202,12 @@ preflight() {
     check_nginx_domain
     [[ -f "$SOURCE/artisan" && -f "$SOURCE/composer.lock" && -f "$SOURCE/package-lock.json" ]] || fatal 'The project source and lock files are required.'
     [[ "$SOURCE" != "$APP"/* ]] || fatal 'Run from the project root, not a nested directory inside the live application.'
-    validate_input
-    log "Preflight passed for https://$DOMAIN."
     if $CHECK; then
+        validate_input
         inspect_requirements
         log 'Read-only check complete. No packages, files, services or certificates changed.'
     fi
+    log "Preflight passed for https://$DOMAIN."
 }
 
 inspect_requirements() {
@@ -877,6 +899,7 @@ main() {
     flock -n 9 || fatal 'Another Second Hand deployment is running.'
     # Recheck protected state and conflicts after acquiring the lock.
     preflight
+    prepare_environment
     WORK=$(mktemp -d "$CONFIG/run.XXXXXXXX")
     trap finish EXIT
     trap 'exit 130' INT
