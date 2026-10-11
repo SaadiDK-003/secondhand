@@ -14,6 +14,12 @@ class ActivityResource extends \Filament\Resources\Resource
 {
     protected static ?string $model = ActivityLog::class;
 
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-clock';
+
+    protected static ?int $navigationSort = 5;
+
+    protected static ?string $navigationLabel = 'Activity log';
+
     public static function canViewAny(): bool
     {
         return Gate::allows('moderate');

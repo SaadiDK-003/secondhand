@@ -16,6 +16,10 @@ class KeywordsResource extends \Filament\Resources\Resource
 {
     protected static ?string $model = ProhibitedKeyword::class;
 
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-shield-check';
+
+    protected static ?int $navigationSort = 4;
+
     public static function canViewAny(): bool
     {
         return Gate::allows('moderate');

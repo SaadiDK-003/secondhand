@@ -1,0 +1,306 @@
+@import '../../../../vendor/filament/filament/resources/css/theme.css';
+
+@source '../../../../app/Filament/**/*.php';
+@source '../../../../resources/views/filament/**/*.blade.php';
+
+.fi-body {
+    background: #f5f7fb;
+    color: #26394d;
+}
+
+.fi-sidebar {
+    background: #fff;
+    border-inline-end: 1px solid #e5ebf2;
+}
+
+.fi-sidebar-item-btn {
+    border-radius: 0.75rem;
+    min-height: 2.75rem;
+}
+
+.fi-sidebar-item.fi-active > .fi-sidebar-item-btn {
+    background: #eaf2fc;
+}
+
+.fi-topbar {
+    border-bottom: 1px solid #e5ebf2;
+    box-shadow: none;
+}
+
+.fi-header-heading {
+    letter-spacing: -0.035em;
+}
+
+.fi-btn.fi-color-primary {
+    background: #0066cc;
+    color: #fff;
+}
+
+.fi-btn.fi-color-primary:hover {
+    background: #0052a3;
+    color: #fff;
+}
+
+.fi-btn.fi-color-primary .fi-icon {
+    color: inherit;
+}
+
+.fi-section,
+.fi-ta-ctn,
+.fi-wi-stats-overview-stat {
+    border-radius: 1rem;
+    box-shadow: 0 2px 8px #17365205;
+}
+
+.sh-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    color: #26394d;
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+}
+
+.sh-brand img {
+    flex-shrink: 0;
+}
+
+.sh-brand small {
+    display: block;
+    margin-top: 0.1rem;
+    color: #637589;
+    font-size: 0.55rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+}
+
+.sh-marketplace-link {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-inline-start: 0.5rem;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid #dce6f2;
+    border-radius: 0.7rem;
+    color: #0052a3;
+    background: #f5f9ff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.sh-marketplace-link:hover {
+    background: #eaf2fc;
+}
+
+.sh-marketplace-link:focus-visible,
+.sh-inline-link:focus-visible {
+    outline: 2px solid #0066cc;
+    outline-offset: 3px;
+}
+
+.sh-welcome {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1.5rem;
+    border: 1px solid #d7e6f8;
+    border-radius: 1.2rem;
+    padding: 1.75rem;
+    background: linear-gradient(115deg, #eef5ff, #fff 85%);
+}
+
+.sh-eyebrow {
+    color: #0052a3;
+    font-size: 0.65rem;
+    letter-spacing: 0.12em;
+    font-weight: 700;
+}
+
+.sh-welcome h2 {
+    margin-top: 0.5rem;
+    color: #20364e;
+    font-size: clamp(1.35rem, 2.4vw, 1.85rem);
+    font-weight: 700;
+    letter-spacing: -0.035em;
+    overflow-wrap: anywhere;
+}
+
+.sh-welcome > div > p:last-child {
+    margin-top: 0.5rem;
+    max-width: 34rem;
+    color: #526477;
+    font-size: 0.9rem;
+    line-height: 1.65;
+}
+
+.sh-welcome-actions,
+.sh-health-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.sh-health {
+    min-width: 0;
+    border: 1px solid #e1e8f0;
+    border-radius: 1.2rem;
+    background: #fff;
+    overflow: hidden;
+}
+
+.sh-health-heading {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem;
+}
+
+.sh-health-heading h2 {
+    margin: 0.25rem 0;
+    font-weight: 700;
+    font-size: 1.25rem;
+    letter-spacing: -0.025em;
+}
+
+.sh-health-heading p:last-child {
+    color: #637589;
+    font-size: 0.8rem;
+}
+
+.sh-health-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.9rem;
+    padding: 0 1.5rem 1.5rem;
+}
+
+.sh-health-card {
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    padding: 1.1rem;
+    border: 1px solid #e5ebf2;
+    border-radius: 0.9rem;
+    background: #fcfdff;
+}
+
+.sh-health-card-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    width: 100%;
+}
+
+.sh-health-card h3 {
+    font-size: 0.9rem;
+    font-weight: 650;
+}
+
+.sh-health-card p {
+    margin: 0.8rem 0 1rem;
+    color: #526477;
+    font-size: 0.8rem;
+    line-height: 1.6;
+}
+
+.sh-health-latency {
+    margin-top: auto;
+    font-size: 0.7rem;
+    color: #637589;
+    font-variant-numeric: tabular-nums;
+}
+
+.sh-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid;
+    border-radius: 999px;
+    padding: 0.25rem 0.55rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.sh-status::before {
+    content: '';
+    width: 0.35rem;
+    height: 0.35rem;
+    background: currentColor;
+    border-radius: 50%;
+}
+
+.sh-status-healthy {
+    color: #166534;
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+}
+
+.sh-status-warning {
+    color: #92400e;
+    background: #fffbeb;
+    border-color: #fde68a;
+}
+
+.sh-status-failed {
+    color: #991b1b;
+    background: #fef2f2;
+    border-color: #fecaca;
+}
+
+.sh-health-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.5rem;
+    border-top: 1px solid #e5ebf2;
+    background: #f9fbfd;
+}
+
+.sh-health-footer p {
+    max-width: 44rem;
+    font-size: 0.75rem;
+    line-height: 1.6;
+    color: #637589;
+}
+
+.sh-inline-link {
+    font-size: 0.8rem;
+    color: #0052a3;
+    font-weight: 600;
+}
+
+@media (max-width: 1100px) {
+    .sh-health-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .sh-health-grid {
+        grid-template-columns: minmax(0, 1fr);
+        padding: 0 1rem 1rem;
+    }
+
+    .sh-welcome,
+    .sh-health-heading,
+    .sh-health-footer {
+        padding: 1.1rem;
+    }
+
+    .sh-marketplace-link {
+        margin-inline-start: 0;
+        padding: 0.6rem;
+        font-size: 0.7rem;
+    }
+}

@@ -19,6 +19,10 @@ class ReportsResource extends \Filament\Resources\Resource
 {
     protected static ?string $model = Report::class;
 
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-flag';
+
+    protected static ?int $navigationSort = 2;
+
     public static function canViewAny(): bool
     {
         return Gate::allows('moderate');

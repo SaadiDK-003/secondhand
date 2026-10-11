@@ -19,6 +19,10 @@ class ListingsResource extends \Filament\Resources\Resource
 {
     protected static ?string $model = Listing::class;
 
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-shopping-bag';
+
+    protected static ?int $navigationSort = 1;
+
     public static function canViewAny(): bool
     {
         return Gate::allows('moderate');

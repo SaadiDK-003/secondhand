@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link, router } from '@inertiajs/vue3';
-import { LogOut, Settings, ClipboardList } from '@lucide/vue';
+import { LogOut, Settings, ClipboardList, ShieldCheck } from '@lucide/vue';
 import {
     DropdownMenuGroup,
     DropdownMenuItem,
@@ -31,6 +31,12 @@ defineProps<Props>();
     </DropdownMenuLabel>
     <DropdownMenuSeparator />
     <DropdownMenuGroup>
+        <DropdownMenuItem v-if="user.is_admin" :as-child="true">
+            <a class="block w-full cursor-pointer" href="/admin">
+                <ShieldCheck class="mr-2 h-4 w-4" />
+                Admin panel
+            </a>
+        </DropdownMenuItem>
         <DropdownMenuItem :as-child="true">
             <Link class="block w-full cursor-pointer" href="/my-listings"
                 ><ClipboardList class="mr-2 h-4 w-4" />My listings</Link
