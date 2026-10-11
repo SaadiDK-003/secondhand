@@ -306,7 +306,11 @@
     }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767px) {
+    .fi-topbar .sh-marketplace-link {
+        display: none;
+    }
+
     .fi-ta-ctn .fi-ta-header-toolbar > .fi-ta-actions:not(:has(*)) {
         display: none;
     }
@@ -325,6 +329,7 @@
     .fi-ta-ctn .fi-ta-header-toolbar .fi-ta-search-field .fi-input-wrp {
         width: 100%;
         min-width: 0;
+        min-height: 2.75rem;
     }
 
     .fi-ta-ctn .fi-ta-header-toolbar .fi-ta-search-field input {
@@ -338,6 +343,26 @@
         flex-shrink: 0;
     }
 
+    .fi-ta-ctn .fi-ta-header-toolbar .fi-icon-btn {
+        margin: 0;
+        width: 2.75rem;
+        height: 2.75rem;
+        flex-shrink: 0;
+        border: 1px solid #dce6f2;
+        background: #f5f9ff;
+    }
+
+    .fi-ta-ctn .fi-ta-header-toolbar .fi-icon-btn > .fi-icon-btn-badge-ctn {
+        inset-inline-start: auto;
+        inset-inline-end: 0.125rem;
+        top: 0.125rem;
+        --tw-translate-x: 0;
+        --tw-translate-y: 0;
+        translate: 0 0;
+    }
+}
+
+@media (max-width: 640px) {
     .sh-health-grid {
         grid-template-columns: minmax(0, 1fr);
         padding: 0 1rem 1rem;
@@ -347,11 +372,5 @@
     .sh-health-heading,
     .sh-health-footer {
         padding: 1.1rem;
-    }
-
-    .sh-marketplace-link {
-        margin-inline-start: 0;
-        padding: 0.6rem;
-        font-size: 0.7rem;
     }
 }
