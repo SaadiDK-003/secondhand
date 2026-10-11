@@ -8,6 +8,7 @@ use App\Models\ProhibitedKeyword;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\PageRegistration;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
 use Illuminate\Support\Facades\Gate;
 
@@ -32,10 +33,24 @@ class KeywordsResource extends \Filament\Resources\Resource
 
     public static function table(Table $table): Table
     {
-        return $table->columns([TextColumn::make('phrase')->searchable(), TextColumn::make('is_active')->label('Active')])->recordActions([
-            Action::make('toggle')->requiresConfirmation()->action(function (ProhibitedKeyword $record): void {
-                app(ModerateMarketplace::class)->keyword(auth()->user(), $record->phrase, ! $record->is_active);
-            }),
+        return $table->stackedOnMobile()->columns([
+            TextColumn::make('phrase')->searchable()->wrap(),
+            TextColumn::make('is_active')->label('Status')
+                ->getStateUsing(fn (ProhibitedKeyword $record): string => $record->is_active ? 'Active' : 'Disabled')
+                ->badge()->color(fn (ProhibitedKeyword $record): string => $record->is_active ? 'success' : 'gray'),
+        ])->filters([
+            TernaryFilter::make('is_active')->label('Keyword status')->placeholder('All keywords')->trueLabel('Active')->falseLabel('Disabled'),
+        ])->recordActionsColumnLabel('Actions')->recordActions([
+            Action::make('toggle')
+                ->label(fn (ProhibitedKeyword $record): string => $record->is_active ? 'Disable' : 'Enable')
+                ->color(fn (ProhibitedKeyword $record): string => $record->is_active ? 'warning' : 'success')
+                ->modalHeading(fn (ProhibitedKeyword $record): string => $record->is_active ? 'Disable keyword' : 'Enable keyword')
+                ->modalDescription(fn (ProhibitedKeyword $record): string => $record->is_active
+                    ? 'This phrase will no longer flag new listings for review.'
+                    : 'New listings containing this phrase will be flagged for review.')
+                ->requiresConfirmation()->action(function (ProhibitedKeyword $record): void {
+                    app(ModerateMarketplace::class)->keyword(auth()->user(), $record->phrase, ! $record->is_active);
+                }),
         ]);
     }
 
