@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs locally with mocked service commands; never installs packages or changes /etc.
-set -Eeuo pipefail
 # Overrides/globals are invoked through functions in the sourced deployment script.
 # shellcheck disable=SC2034,SC2329
+set -Eeuo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 # shellcheck source=../../deploy.sh
 source "$ROOT/deploy.sh"
@@ -103,6 +103,8 @@ passed=$((passed + 1))
     ENV_FILE=''; DOMAIN=example.com; APP="$TEST_DIR/auto-env"; STATE="$TEST_DIR/missing-state"
     getent() { return 1; }
     chown() { printf 'chown %s\n' "$*" >> "$TEST_DIR/auto-env-actions"; }
+    # This case exercises only direct chmod calls in prepare_environment.
+    # shellcheck disable=SC2032
     chmod() { printf 'chmod %s\n' "$*" >> "$TEST_DIR/auto-env-actions"; }
     python3() {
         printf '%s\n' "$*" >> "$TEST_DIR/auto-env-actions"
@@ -237,5 +239,94 @@ done
     apt_missing nginx php8.4-cli redis-server
 )
 pass 'already-installed packages are not reinstalled'
+
+(
+    CHECK=true
+    init_display
+    stage 1 'Read-only server checks'
+    log 'Readable piped output'
+    [[ "$UI_INTERACTIVE" == false && -z "$C_RESET" && "$STAGE_TOTAL" == 1 ]]
+    [[ $(duration 75) == '1m 15s' && $(duration 8) == '8s' ]]
+) > "$TEST_DIR/plain-output"
+if grep -q $'\033' "$TEST_DIR/plain-output"; then exit 1; fi
+grep -q '\[1/1\] Read-only server checks' "$TEST_DIR/plain-output"
+pass 'redirected output has readable stages and durations without ANSI codes'
+
+(
+    NO_COLOR=1; TERM=dumb
+    init_display
+    [[ -z "$C_BLUE" && -z "$C_GREEN" && "$UI_INTERACTIVE" == false ]]
+)
+pass 'NO_COLOR and dumb terminals use plain output'
+
+(
+    WORK="$TEST_DIR/display-command"; mkdir -p "$WORK"
+    STATE="$TEST_DIR/no-display-state"; ENV_FILE="$TEST_DIR/display.env"
+    DEPLOY_LOG="$TEST_DIR/display.log"
+    printf 'APP_KEY=display-test-private-value\n' > "$ENV_FILE"
+    run_quiet 'Verify output privacy' printf 'result: display-test-private-value\n'
+    receive_input() { local input; IFS= read -r input; [[ "$input" == private-test-input ]]; }
+    run_quiet 'Preserve command stdin' receive_input <<< 'private-test-input'
+    [[ ! -s "$WORK/command.log" ]]
+    grep -q '\[REDACTED\]' "$DEPLOY_LOG"
+    if grep -q 'display-test-private-value' "$DEPLOY_LOG"; then exit 1; fi
+) > "$TEST_DIR/display-success"
+grep -q '\[RUN \] Verify output privacy' "$TEST_DIR/display-success"
+grep -q '\[OK  \] Verify output privacy' "$TEST_DIR/display-success"
+if grep -q 'display-test-private-value' "$TEST_DIR/display-success"; then exit 1; fi
+pass 'timed task output stays readable and secrets remain redacted in protected logs'
+
+(
+    WORK="$TEST_DIR/display-command"; STATE="$TEST_DIR/no-display-state"; ENV_FILE=''
+    DEPLOY_LOG="$TEST_DIR/display.log"
+    expect_failure 'failed task still exits unsuccessfully' run_quiet 'Deliberate failure' false
+    grep -q '\[FAIL\] Deliberate failure' "$TEST_DIR/output"
+) > "$TEST_DIR/display-failure"
+pass 'task errors retain failure status and identify the failed task'
+
+(
+    UI_INTERACTIVE=true
+    sleep() { command sleep 0.02; }
+    start_activity 'Long test task'
+    activity=$ACTIVITY_PID
+    command sleep 1
+    stop_activity
+    [[ -z "$ACTIVITY_PID" ]]
+    if kill -0 "$activity" 2>/dev/null; then exit 1; fi
+) > "$TEST_DIR/activity-output"
+grep -q '\[WAIT\] Long test task is still running' "$TEST_DIR/activity-output"
+pass 'long task updates stop promptly without leaving the display process running'
+
+(
+    WORK="$TEST_DIR/interrupted-display"; mkdir -p "$WORK"
+    STAGING=''; SUCCESS=false; MAINTENANCE=false; SNAPSHOT_READY=false
+    DEPLOY_LOG="$TEST_DIR/display.log"; STAGE_NUMBER=4
+    UI_INTERACTIVE=true
+    trap finish EXIT
+    trap 'exit 143' TERM
+    start_activity 'Interrupted task'
+    printf '%s' "$ACTIVITY_PID" > "$TEST_DIR/interrupted-display.pid"
+    kill -TERM "$BASHPID"
+) > "$TEST_DIR/interrupted-display-output" 2>&1 && { printf 'Interrupt status was lost\n' >&2; exit 1; }
+activity=$(cat "$TEST_DIR/interrupted-display.pid")
+if kill -0 "$activity" 2>/dev/null; then exit 1; fi
+grep -q 'Deployment stopped in stage 4/8' "$TEST_DIR/interrupted-display-output"
+pass 'interrupted deployment stops its display helper and retains a failure exit status'
+
+(
+    DOMAIN=secondhand.webostics.com
+    PG_PORT=20000; REDIS_PORT=20001; MEILI_PORT=7700; SSR_PORT=13714
+    STAGE_NUMBER=7
+    systemctl() {
+        if [[ "$2" == secondhand-horizon.service ]]; then printf 'inactive'; return 3; fi
+        printf 'active'
+    }
+    show_summary
+) > "$TEST_DIR/summary-output"
+grep -q 'PostgreSQL.*active.*127.0.0.1:20000' "$TEST_DIR/summary-output"
+grep -q 'Queue workers.*inactive' "$TEST_DIR/summary-output"
+grep -q 'A service needs attention' "$TEST_DIR/summary-output"
+grep -q '\[8/8\] Deployment summary' "$TEST_DIR/summary-output"
+pass 'service summary displays saved ports and flags inactive services'
 
 printf '%s deployment CLI/safety checks passed.\n' "$passed"

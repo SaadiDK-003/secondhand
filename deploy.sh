@@ -22,10 +22,114 @@ APP=/var/www/html/secondhand
 PG_BIN='' MIGRATIONS_STARTED=false
 PHP=/usr/bin/php8.4 NODE='' COMPOSER=''
 MEILI_VERSION=1.54.3
+DEPLOY_LOG=/var/log/secondhand-deploy.log
+UI_INTERACTIVE=false STAGE_NUMBER=0 STAGE_TOTAL=8
+START_TIME=$SECONDS STAGE_TIME=$SECONDS ACTIVITY_PID=''
+C_RESET='' C_BOLD='' C_BLUE='' C_GREEN='' C_YELLOW='' C_RED=''
 
-log() { printf '[secondhand] %s\n' "$*"; }
+init_display() {
+    UI_INTERACTIVE=false
+    C_RESET='' C_BOLD='' C_BLUE='' C_GREEN='' C_YELLOW='' C_RED=''
+    if [[ -t 1 && "${TERM:-dumb}" != dumb ]]; then
+        UI_INTERACTIVE=true
+        if [[ ! -v NO_COLOR ]]; then
+            C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_BLUE=$'\033[36m'
+            C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_RED=$'\033[31m'
+        fi
+    fi
+    START_TIME=$SECONDS; STAGE_TIME=$SECONDS; STAGE_NUMBER=0
+    STAGE_TOTAL=8; if $CHECK; then STAGE_TOTAL=1; fi
+}
 
-fatal() { printf '[secondhand] ERROR: %s\n' "$*" >&2; exit 1; }
+duration() {
+    local elapsed=$1
+    if ((elapsed >= 60)); then printf '%dm %02ds' "$((elapsed / 60))" "$((elapsed % 60))";
+    else printf '%ss' "$elapsed"; fi
+}
+
+message() { printf '  %s[%-4s]%s %s\n' "$1" "$2" "$C_RESET" "$3"; }
+log() { message "$C_BLUE" INFO "$*"; }
+done_message() { message "$C_GREEN" OK "$*"; }
+skip_message() { message "$C_YELLOW" SKIP "$*"; }
+
+fatal() {
+    stop_activity
+    message "$C_RED" FAIL "$*" >&2
+    exit 1
+}
+
+stage() {
+    if ((STAGE_NUMBER > 0)); then
+        done_message "Stage $STAGE_NUMBER complete ($(duration "$((SECONDS - STAGE_TIME))"))."
+    fi
+    STAGE_NUMBER=$1; STAGE_TIME=$SECONDS
+    printf '\n%s[%s/%s] %s%s\n' "$C_BOLD$C_BLUE" "$STAGE_NUMBER" "$STAGE_TOTAL" "$2" "$C_RESET"
+    [[ -z "${3:-}" ]] || printf '      %s\n' "$3"
+}
+
+start_activity() {
+    $UI_INTERACTIVE || return 0
+    local label=$1 started=$SECONDS
+    (
+        # Only the display helper is asynchronous; deployment commands retain stdin
+        # and their normal signal/exit behavior. Clean up its sleeping child too.
+        sleeper=''
+        trap 'if [[ -n "$sleeper" ]]; then kill "$sleeper" 2>/dev/null || true; fi; exit 0' INT TERM
+        while true; do
+            sleep 15 & sleeper=$!
+            wait "$sleeper" || exit 0
+            message "$C_YELLOW" WAIT "$label is still running ($(duration "$((SECONDS - started))"))."
+        done
+    ) &
+    ACTIVITY_PID=$!
+}
+
+stop_activity() {
+    if [[ -n "$ACTIVITY_PID" ]]; then
+        kill "$ACTIVITY_PID" 2>/dev/null || true
+        wait "$ACTIVITY_PID" 2>/dev/null || true
+        ACTIVITY_PID=''
+    fi
+}
+
+show_context() {
+    printf '\n  %-12s %s\n' Website "https://$DOMAIN"
+    printf '  %-12s %s\n' Directory "$APP"
+    if ! $CHECK; then printf '  %-12s %s\n' Details "$DEPLOY_LOG (protected, redacted)"; fi
+}
+
+show_summary() {
+    stage 8 'Deployment summary'
+    show_context
+    printf '\n  %-22s %-9s %s\n' SERVICE STATUS CONNECTION
+    printf '  %-22s %-9s %s\n' '----------------------' '---------' '-----------------------'
+    local service label connection status attention=false
+    while IFS='|' read -r service label connection; do
+        status=$(systemctl is-active "$service" || true)
+        status=${status:-unknown}
+        if [[ "$status" == active ]]; then
+            printf '  %-22s %s%-9s%s %s\n' "$label" "$C_GREEN" "$status" "$C_RESET" "$connection"
+        else
+            attention=true
+            printf '  %-22s %s%-9s%s %s\n' "$label" "$C_RED" "$status" "$C_RESET" "$connection"
+        fi
+    done <<EOF
+secondhand-postgres.service|PostgreSQL|127.0.0.1:$PG_PORT
+secondhand-redis.service|Redis|127.0.0.1:$REDIS_PORT
+secondhand-meili.service|Meilisearch|127.0.0.1:$MEILI_PORT
+secondhand-ssr.service|Page rendering (SSR)|127.0.0.1:$SSR_PORT
+secondhand-horizon.service|Queue workers|Horizon
+secondhand-scheduler.timer|Scheduler|Every minute
+php8.4-fpm.service|PHP 8.4 FPM|Dedicated app socket
+nginx.service|Nginx / HTTPS|Ports 80 / 443
+EOF
+    printf '\n'
+    done_message "Website deployed: https://$DOMAIN"
+    log "Total time: $(duration "$((SECONDS - START_TIME))")."
+    log "Site health: https://$DOMAIN/admin/site-health"
+    if $attention; then message "$C_YELLOW" WARN 'A service needs attention. Inspect its systemd journal.'; fi
+    printf '\n'
+}
 
 usage() {
     cat <<'EOF'
@@ -207,7 +311,6 @@ preflight() {
         inspect_requirements
         log 'Read-only check complete. No packages, files, services or certificates changed.'
     fi
-    log "Preflight passed for https://$DOMAIN."
 }
 
 inspect_requirements() {
@@ -241,15 +344,19 @@ inspect_requirements() {
 }
 
 run_quiet() {
-    local label=$1 status=0
+    local label=$1 status=0 started=$SECONDS
     shift
-    log "$label"
+    message "$C_BLUE" RUN "$label"
+    printf '\n[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$label" >> "$DEPLOY_LOG"
+    start_activity "$label"
     "$@" > "$WORK/command.log" 2>&1 || status=$?
+    stop_activity
     local -a args=(redact --state "$STATE")
     [[ -z "$ENV_FILE" ]] || args+=(--input "$ENV_FILE")
-    python3 "$HELPER" "${args[@]}" < "$WORK/command.log" >> /var/log/secondhand-deploy.log
+    python3 "$HELPER" "${args[@]}" < "$WORK/command.log" >> "$DEPLOY_LOG"
     : > "$WORK/command.log"
-    [[ "$status" == 0 ]] || fatal "$label failed. Inspect /var/log/secondhand-deploy.log (redacted, root-only)."
+    [[ "$status" == 0 ]] || fatal "$label failed after $(duration "$((SECONDS - started))"). Inspect $DEPLOY_LOG (redacted, root-only)."
+    done_message "$label ($(duration "$((SECONDS - started))"))."
 }
 
 restore_package_guards() {
@@ -278,7 +385,10 @@ apt_missing() {
     for package in "$@"; do
         [[ $(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null || true) == installed ]] || missing+=("$package")
     done
-    ((${#missing[@]})) || return 0
+    if ((${#missing[@]} == 0)); then
+        skip_message "Requested system packages already installed ($# checked)."
+        return 0
+    fi
     # Do not let package hooks restart unrelated sites. Preserve an existing policy.
     if [[ ! -e /usr/sbin/policy-rc.d ]]; then
         printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
@@ -343,8 +453,11 @@ setup_dependencies() {
         apt_missing postgresql postgresql-client
         restore_package_guards
         locate_postgres || fatal 'PostgreSQL 16 or newer was not installed correctly.'
+    else
+        skip_message 'Compatible PostgreSQL installation found; keeping it.'
     fi
-    command -v certbot >/dev/null || apt_missing certbot
+    if command -v certbot >/dev/null; then skip_message 'Certbot is already installed.';
+    else apt_missing certbot; fi
     setup_node_composer
     setup_meilisearch
 }
@@ -353,8 +466,10 @@ setup_node_composer() {
     local arch tarball hash
     if command -v node >/dev/null && [[ $(node -p 'process.versions.node.split(".")[0]') == 24 ]]; then
         NODE=$(readlink -f "$(command -v node)")
+        skip_message 'Compatible Node 24 installation found; keeping it.'
     elif [[ -x "$RUNTIME/node/bin/node" && $("$RUNTIME/node/bin/node" -p 'process.versions.node.split(".")[0]') == 24 ]]; then
         NODE="$RUNTIME/node/bin/node"
+        skip_message 'Reusing the app-specific Node 24 runtime.'
     else
         arch=x64; [[ $(uname -m) != aarch64 ]] || arch=arm64
         run_quiet 'Download official Node 24 checksum manifest' curl --fail --silent --show-error --proto '=https' --tlsv1.2 https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt -o "$WORK/node-checksums"
@@ -370,8 +485,10 @@ setup_node_composer() {
     fi
     if command -v composer >/dev/null && composer --version --no-ansi 2>/dev/null | grep -q '^Composer version 2\.'; then
         COMPOSER=$(readlink -f "$(command -v composer)")
+        skip_message 'Compatible Composer 2 installation found; keeping it.'
     elif [[ -f "$RUNTIME/composer.phar" ]] && "$PHP" "$RUNTIME/composer.phar" --version --no-ansi | grep -q '^Composer version 2\.'; then
         COMPOSER="$RUNTIME/composer.phar"
+        skip_message 'Reusing the app-specific Composer 2 runtime.'
     else
         run_quiet 'Download verified Composer installer checksum' curl --fail --silent --show-error --proto '=https' --tlsv1.2 https://composer.github.io/installer.sig -o "$WORK/composer.sig"
         run_quiet 'Download Composer installer' curl --fail --silent --show-error --proto '=https' --tlsv1.2 https://getcomposer.org/installer -o "$WORK/composer-setup.php"
@@ -389,7 +506,10 @@ setup_node_composer() {
 
 setup_meilisearch() {
     local asset arch url digest
-    if [[ -x "$RUNTIME/meilisearch" ]] && "$RUNTIME/meilisearch" --version | grep -q "meilisearch $MEILI_VERSION"; then return 0; fi
+    if [[ -x "$RUNTIME/meilisearch" ]] && "$RUNTIME/meilisearch" --version | grep -q "meilisearch $MEILI_VERSION"; then
+        skip_message "Meilisearch $MEILI_VERSION is already installed."
+        return 0
+    fi
     [[ ! -e "$RUNTIME/meilisearch" ]] || fatal 'The app Meilisearch version differs; perform a documented search-engine upgrade separately.'
     arch=amd64; [[ $(uname -m) != aarch64 ]] || arch=aarch64
     asset="meilisearch-linux-$arch"
@@ -485,11 +605,17 @@ EOF
 }
 
 wait_ready() {
-    local label=$1
+    local label=$1 started=$SECONDS
     shift
+    message "$C_BLUE" RUN "Wait for $label to become ready"
+    start_activity "Waiting for $label"
     local attempt
     for ((attempt=1; attempt<=30; attempt++)); do
-        if "$@" >/dev/null 2>&1; then return 0; fi
+        if "$@" >/dev/null 2>&1; then
+            stop_activity
+            done_message "$label is ready ($(duration "$((SECONDS - started))"))."
+            return 0
+        fi
         sleep 1
     done
     fatal "$label did not become ready. Inspect its systemd journal."
@@ -497,7 +623,7 @@ wait_ready() {
 
 start_unit() {
     systemctl daemon-reload
-    systemctl enable --now "secondhand-$1.service" >/dev/null
+    run_quiet "Enable/start $1 service" systemctl enable --now "secondhand-$1.service"
 }
 
 setup_data_services() {
@@ -611,7 +737,9 @@ ensure_certificate() {
             # standalone authenticator or installer for a borrowed certificate.
             if [[ "${lineage##*/}" == "secondhand-$DOMAIN" ]]; then existing=$lineage; fi
             if openssl x509 -in "$certificate" -noout -checkend 2592000 >/dev/null 2>&1; then
-                CERT_LINEAGE=$lineage; break
+                CERT_LINEAGE=$lineage
+                skip_message 'Valid HTTPS certificate found; more than 30 days remain.'
+                break
             fi
         fi
     done
@@ -634,9 +762,9 @@ ensure_certificate() {
     printf '#!/bin/sh\n# Managed by secondhand deploy.sh\n/usr/sbin/nginx -t && /bin/systemctl reload nginx\n' > "$hook"
     chmod 755 "$hook"
     if systemctl list-unit-files certbot.timer --no-legend | grep -q '^certbot.timer'; then
-        systemctl enable --now certbot.timer >/dev/null
+        run_quiet 'Enable automatic HTTPS renewal' systemctl enable --now certbot.timer
     elif systemctl list-unit-files snap.certbot.renew.timer --no-legend | grep -q '^snap.certbot.renew.timer'; then
-        systemctl enable --now snap.certbot.renew.timer >/dev/null
+        run_quiet 'Enable automatic HTTPS renewal' systemctl enable --now snap.certbot.renew.timer
     else
         fatal 'Certbot is installed but no automatic renewal timer is available.'
     fi
@@ -826,7 +954,7 @@ deploy_app() {
     fi
     write_app_units
     systemctl daemon-reload
-    systemctl enable --now php8.4-fpm >/dev/null
+    run_quiet 'Enable/start PHP-FPM' systemctl enable --now php8.4-fpm
     systemctl reload php8.4-fpm
     nginx_https > "$NGINX_ACME"
     if [[ "$DOMAIN" == $(state_get domain) ]]; then
@@ -834,7 +962,8 @@ deploy_app() {
     fi
     run_quiet 'Validate HTTPS configuration' /usr/sbin/nginx -t
     systemctl reload nginx
-    systemctl enable --now secondhand-ssr.service secondhand-horizon.service secondhand-scheduler.timer >/dev/null
+    run_quiet 'Start rendering, workers and scheduler' systemctl enable --now secondhand-ssr.service secondhand-horizon.service secondhand-scheduler.timer
+    stage 7 'Verify the live website' 'Check HTTPS, data services, image storage, mail, workers and scheduler.'
     wait_ready SSR artisan "$APP" inertia:check-ssr
     wait_ready Horizon artisan "$APP" horizon:status
     run_quiet 'Check application services and private storage' artisan "$APP" deploy:health --storage
@@ -867,6 +996,7 @@ finish() {
     local status=$?
     trap - EXIT INT TERM
     set +e
+    stop_activity
     restore_package_guards || { log 'Package setup cleanup failed; inspect the deployment log.'; status=1; }
     if ! $SUCCESS; then
         if $SNAPSHOT_READY; then
@@ -886,7 +1016,10 @@ finish() {
                 systemctl start secondhand-horizon.service secondhand-scheduler.timer secondhand-ssr.service >/dev/null 2>&1
             fi
         fi
-        log "Failure details: /var/log/secondhand-deploy.log; saved configuration: $WORK"
+        printf '\n'
+        message "$C_RED" FAIL "Deployment stopped in stage $STAGE_NUMBER/$STAGE_TOTAL ($(duration "$((SECONDS - START_TIME))") elapsed)."
+        log "Failure details: $DEPLOY_LOG; saved configuration: $WORK"
+        printf '  Read log: sudo tail -n 60 %s\n\n' "$DEPLOY_LOG"
         [[ "$status" != 0 ]] || status=1
     elif [[ "$WORK" == "$CONFIG"/run.* && ! -L "$WORK" ]]; then
         rm -rf -- "$WORK"
@@ -897,19 +1030,25 @@ finish() {
 
 main() {
     parse_args "$@"
+    init_display
+    printf '\n%s  SECOND HAND  |  %s%s\n' "$C_BOLD$C_BLUE" "$(if $CHECK; then printf 'READ-ONLY CHECK'; else printf 'DEPLOYMENT'; fi)" "$C_RESET"
+    printf '  Ubuntu 24.04 / Native Nginx + PHP-FPM\n'
+    stage 1 'Check server and configuration' 'Validate the platform, domain, ports and protected settings.'
     preflight
-    $CHECK && return 0
+    if $CHECK; then show_context; done_message 'Read-only checks finished.'; printf '\n'; return 0; fi
     [[ -d "$CONFIG" ]] || install -d -m 700 "$CONFIG"
     exec 9> "$CONFIG/deploy.lock"
     flock -n 9 || fatal 'Another Second Hand deployment is running.'
     # Recheck protected state and conflicts after acquiring the lock.
     preflight
+    done_message "Preflight passed for https://$DOMAIN."
+    show_context
     prepare_environment
     WORK=$(mktemp -d "$CONFIG/run.XXXXXXXX")
     trap finish EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    touch /var/log/secondhand-deploy.log; chmod 600 /var/log/secondhand-deploy.log
+    touch "$DEPLOY_LOG"; chmod 600 "$DEPLOY_LOG"
     install -d -m 755 "$BASE" "$BASE/shared" "$BASE/acme" "$DATA" "$RUNTIME" "$APP"
     if ! id "$USER_NAME" >/dev/null 2>&1; then
         useradd --system --user-group --home-dir "$BASE/shared/home" --shell /usr/sbin/nologin "$USER_NAME"
@@ -920,19 +1059,19 @@ main() {
     chown -R "$USER_NAME:$USER_NAME" "$APP/storage"
     chmod 750 "$CONFIG"; chown root:"$USER_NAME" "$CONFIG"
     snapshot_configs
+    stage 2 'Prepare runtime dependencies' 'Reuse compatible tools and install only missing requirements.'
     setup_dependencies
     check_public_ports
+    stage 3 'Prepare private data services' 'PostgreSQL, Redis and Meilisearch use the saved private ports.'
     prepare_state
     setup_data_services
+    stage 4 'Build the application' 'Install locked dependencies and build the website and SSR.'
     build_app
+    stage 5 'Configure Nginx and HTTPS' 'Validate the dedicated site and reuse or issue its certificate.'
     prepare_web
+    stage 6 'Publish the application' 'Brief maintenance window: back up the database, migrate and update the app.'
     deploy_app
-    log "Website deployed: https://$DOMAIN"
-    log "Private ports: PostgreSQL=$PG_PORT Redis=$REDIS_PORT Meilisearch=$MEILI_PORT SSR=$SSR_PORT."
-    local service
-    for service in secondhand-{postgres,redis,meili,ssr,horizon}.service secondhand-scheduler.timer php8.4-fpm.service nginx.service; do
-        log "$service: $(systemctl is-active "$service" || true)"
-    done
+    show_summary
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
