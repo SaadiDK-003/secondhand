@@ -1,0 +1,49 @@
+name: Native deployment VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Disposable VM scenario
+        required: true
+        default: shared
+        type: choice
+        options: [basic, shared]
+      runner:
+        description: Ubuntu architecture (arm runner availability depends on account)
+        required: true
+        default: ubuntu-24.04
+        type: choice
+        options: [ubuntu-24.04, ubuntu-24.04-arm]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: |
+          for script in deploy.sh tests/Deployment/*.sh; do bash -n "$script"; done
+          shellcheck -x -P SCRIPTDIR -S warning deploy.sh tests/Deployment/*.sh
+          python3 -m unittest discover -s tests/Deployment -p 'test_*.py'
+          bash tests/Deployment/cli.sh
+
+  native-smoke:
+    needs: verify
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install and exercise the native deployment on the disposable runner
+        env:
+          DEPLOYMENT_PROFILE: ${{ inputs.profile }}
+        run: sudo env SECONDHAND_DISPOSABLE_VM=yes DEPLOYMENT_PROFILE="$DEPLOYMENT_PROFILE" bash tests/Deployment/ubuntu-native-smoke.sh
+      - name: Deployment diagnostics (fixture secrets are redacted)
+        if: failure()
+        run: sudo tail -n 120 /var/log/secondhand-deploy.log || true

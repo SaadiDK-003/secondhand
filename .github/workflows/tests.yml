@@ -1,0 +1,87 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: second_hand_test
+          POSTGRES_USER: second_hand
+          POSTGRES_PASSWORD: local-development-only
+        ports: ['5432:5432']
+        options: --health-cmd="pg_isready -U second_hand" --health-interval=5s --health-timeout=5s --health-retries=10
+      meilisearch:
+        image: getmeili/meilisearch:v1.54.3
+        env:
+          MEILI_MASTER_KEY: local-meilisearch-development-key
+          MEILI_NO_ANALYTICS: 'true'
+        ports: ['7700:7700']
+      redis:
+        image: redis:7.4-bookworm
+        ports: ['6379:6379']
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-timeout=5s --health-retries=10
+    env:
+      DB_DATABASE: second_hand_test
+      SSR_TESTS: 1
+      MEILISEARCH_TESTS: 1
+      MEILISEARCH_KEY: local-meilisearch-development-key
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_pgsql, redis, gd, exif
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Setup Application
+        run: |
+          cp .env.example .env
+          composer install --no-interaction --prefer-dist
+          php artisan key:generate
+          npm ci
+
+      - name: Audit dependencies
+        run: |
+          composer audit --locked --no-interaction
+          npm audit --audit-level=high
+
+      - name: Build frontend and SSR
+        run: npm run build:ssr
+
+      - name: Start SSR
+        run: |
+          php artisan inertia:start-ssr > /tmp/second-hand-ssr.log 2>&1 &
+          for attempt in $(seq 1 20); do
+            if php artisan inertia:check-ssr; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/second-hand-ssr.log
+          exit 1
+
+      - name: Run CI Checks
+        run: composer ci:check

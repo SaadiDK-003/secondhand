@@ -1,0 +1,8 @@
+.git
+.starter
+.tools
+.env
+.env.*
+node_modules
+vendor
+storage/logs/*

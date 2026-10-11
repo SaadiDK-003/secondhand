@@ -1,0 +1,92 @@
+# Development only. See README for initial setup.
+x-app: &app
+    build:
+        context: .
+        dockerfile: docker/php/Dockerfile
+    working_dir: /var/www/html
+    volumes:
+        - .:/var/www/html
+        - vendor:/var/www/html/vendor
+        - node_modules:/var/www/html/node_modules
+    environment:
+        INERTIA_SSR_HOST: 0.0.0.0
+        INERTIA_SSR_URL: http://ssr:13714
+        INERTIA_SSR_HOT_URL: http://vite:5173
+        DB_HOST: postgres
+        REDIS_HOST: redis
+        MEILISEARCH_HOST: http://meilisearch:7700
+        MEILISEARCH_KEY: local-meilisearch-development-key
+    depends_on:
+        postgres:
+            condition: service_healthy
+        redis:
+            condition: service_healthy
+
+services:
+    app:
+        <<: *app
+        ports:
+            - '127.0.0.1:8000:8000'
+    vite:
+        <<: *app
+        command: npm run dev -- --host=0.0.0.0
+        ports:
+            - '127.0.0.1:5173:5173'
+    ssr:
+        <<: *app
+        command: php artisan inertia:start-ssr
+    queue:
+        <<: *app
+        command: php artisan queue:work redis --tries=3 --timeout=60
+    scheduler:
+        <<: *app
+        command: php artisan schedule:work
+    postgres:
+        image: postgres:17-bookworm
+        environment:
+            POSTGRES_DB: ${DB_DATABASE:-second_hand}
+            POSTGRES_USER: ${DB_USERNAME:-second_hand}
+            POSTGRES_PASSWORD: ${DB_PASSWORD:-local-development-only}
+        ports:
+            - '127.0.0.1:5432:5432'
+        volumes:
+            - postgres:/var/lib/postgresql/data
+            - ./docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+        healthcheck:
+            test:
+                [
+                    'CMD-SHELL',
+                    'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}',
+                ]
+            interval: 5s
+            timeout: 5s
+            retries: 10
+    meilisearch:
+        image: getmeili/meilisearch:v1.54.3
+        environment:
+            MEILI_ENV: development
+            MEILI_MASTER_KEY: local-meilisearch-development-key
+            MEILI_NO_ANALYTICS: 'true'
+        ports:
+            - '127.0.0.1:7700:7700'
+        volumes:
+            - meilisearch:/meili_data
+    redis:
+        image: redis:7.4-bookworm
+        command: redis-server --appendonly yes
+        ports:
+            - '127.0.0.1:6379:6379'
+        volumes:
+            - redis:/data
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 5s
+            timeout: 5s
+            retries: 10
+
+volumes:
+    meilisearch:
+    postgres:
+    redis:
+    vendor:
+    node_modules:
