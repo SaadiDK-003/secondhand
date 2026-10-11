@@ -287,6 +287,37 @@
 }
 
 @media (max-width: 640px) {
+    .fi-ta-ctn .fi-ta-header-toolbar > .fi-ta-actions:not(:has(*)) {
+        display: none;
+    }
+
+    .fi-ta-ctn .fi-ta-header-toolbar > div:has(.fi-ta-search-field) {
+        width: 100%;
+        min-width: 0;
+        gap: 0.75rem;
+    }
+
+    .fi-ta-ctn .fi-ta-header-toolbar .fi-ta-search-field {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .fi-ta-ctn .fi-ta-header-toolbar .fi-ta-search-field .fi-input-wrp {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .fi-ta-ctn .fi-ta-header-toolbar .fi-ta-search-field input {
+        min-width: 0;
+    }
+
+    .fi-ta-ctn
+        .fi-ta-header-toolbar
+        > div:has(.fi-ta-search-field)
+        > .fi-dropdown {
+        flex-shrink: 0;
+    }
+
     .sh-health-grid {
         grid-template-columns: minmax(0, 1fr);
         padding: 0 1rem 1rem;

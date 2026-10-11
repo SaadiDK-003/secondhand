@@ -24,9 +24,9 @@ const inbox = useMessageInbox();
 </script>
 <template>
     <SeoHead />
-    <div class="min-h-screen bg-background text-foreground">
+    <div class="flex min-h-dvh flex-col bg-background text-foreground">
         <a href="#main-content" class="skip-link">Skip to content</a>
-        <header class="border-b bg-card">
+        <header class="shrink-0 border-b bg-card">
             <div
                 class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-4 py-3 min-[380px]:gap-3 sm:gap-4 sm:px-5 sm:py-5 lg:px-8"
             >
@@ -182,8 +182,10 @@ const inbox = useMessageInbox();
                 >
             </nav>
         </header>
-        <div id="main-content" tabindex="-1"><slot /></div>
-        <footer class="mt-12 border-t bg-card">
+        <div id="main-content" tabindex="-1" class="min-w-0 flex-1">
+            <slot />
+        </div>
+        <footer class="mt-12 shrink-0 border-t bg-card">
             <div
                 class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-6 px-5 py-8 text-sm lg:px-8"
             >
