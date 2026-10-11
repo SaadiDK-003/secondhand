@@ -166,6 +166,27 @@ pass 'IPv6 listener and reserved ports force a separate private port'
 pass 'Nginx uses the requested domain and dedicated FPM socket'
 
 (
+    id() { printf 'www-data\n'; }
+    php_fpm_pool www-data > "$TEST_DIR/fpm.conf"
+    grep -q '^; Managed by secondhand deploy.sh$' "$TEST_DIR/fpm.conf"
+    if grep -q '^#' "$TEST_DIR/fpm.conf"; then exit 1; fi
+    grep -q '^listen = /run/php/secondhand.sock$' "$TEST_DIR/fpm.conf"
+    grep -q '^listen.owner = www-data$' "$TEST_DIR/fpm.conf"
+    grep -q '^user = secondhand$' "$TEST_DIR/fpm.conf"
+    grep -q '^php_admin_flag\[display_errors\] = off$' "$TEST_DIR/fpm.conf"
+)
+pass 'PHP-FPM pool uses INI comments and retains private socket and error settings'
+
+for marker in ';' '#'; do
+    (
+        FPM_POOL="$TEST_DIR/managed-fpm.conf"; NGINX_SITE="$TEST_DIR/missing-site"; NGINX_ACME="$TEST_DIR/missing-acme"
+        printf '%s Managed by secondhand deploy.sh\n' "$marker" > "$FPM_POOL"
+        check_nginx_domain
+    )
+    pass "preflight recognizes the app's PHP-FPM ownership marker ($marker)"
+done
+
+(
     STATE="$TEST_DIR/exists"; touch "$STATE"
     state_get() { printf '20001\n'; }
     systemctl() { printf '123\n'; }

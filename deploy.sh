@@ -131,7 +131,7 @@ check_nginx_domain() {
     for file in "$NGINX_SITE" "$NGINX_ACME" "$FPM_POOL" /etc/systemd/system/secondhand-{postgres,redis,meili,ssr,horizon,scheduler}.service /etc/systemd/system/secondhand-scheduler.timer; do
         if [[ -e "$file" || -L "$file" ]]; then
             [[ ! -L "$file" ]] || fatal "Reserved configuration path is a symlink: $file"
-            grep -q '^# Managed by secondhand deploy.sh$' "$file" || fatal "Reserved configuration path already exists: $file"
+            grep -qE '^[#;] Managed by secondhand deploy.sh$' "$file" || fatal "Reserved configuration path already exists: $file"
         fi
     done
     [[ -x /usr/sbin/nginx ]] || return 0
@@ -689,21 +689,10 @@ server {
 EOF
 }
 
-prepare_web() {
-    local nginx_user
-    nginx_user=$(/usr/sbin/nginx -T 2>/dev/null | awk '$1 == "user" && !seen { gsub(";", "", $2); print $2; seen=1 }')
-    nginx_user=${nginx_user:-www-data}
-    [[ "$nginx_user" =~ ^[a-z_][a-z0-9_-]*\$?$ ]] || fatal 'Cannot identify the existing Nginx worker account.'
-    id "$nginx_user" >/dev/null 2>&1 || fatal 'Cannot identify the existing Nginx worker account.'
-    # For same-domain deployments, the existing HTTP challenge route already works.
-    if [[ "$DOMAIN" != $(state_get domain) || ! -f "$NGINX_SITE" ]]; then
-        nginx_http > "$NGINX_ACME"
-        run_quiet 'Validate HTTP challenge virtual host' /usr/sbin/nginx -t
-        if systemctl is-active --quiet nginx; then systemctl reload nginx; else systemctl enable --now nginx >/dev/null; fi
-    fi
-    ensure_certificate
-    cat > "$FPM_POOL" <<EOF
-# Managed by secondhand deploy.sh
+php_fpm_pool() {
+    local nginx_user=$1
+    cat <<EOF
+; Managed by secondhand deploy.sh
 [secondhand]
 user = $USER_NAME
 group = $USER_NAME
@@ -724,6 +713,22 @@ php_admin_flag[expose_php] = off
 php_admin_flag[display_errors] = off
 php_admin_flag[log_errors] = on
 EOF
+}
+
+prepare_web() {
+    local nginx_user
+    nginx_user=$(/usr/sbin/nginx -T 2>/dev/null | awk '$1 == "user" && !seen { gsub(";", "", $2); print $2; seen=1 }')
+    nginx_user=${nginx_user:-www-data}
+    [[ "$nginx_user" =~ ^[a-z_][a-z0-9_-]*\$?$ ]] || fatal 'Cannot identify the existing Nginx worker account.'
+    id "$nginx_user" >/dev/null 2>&1 || fatal 'Cannot identify the existing Nginx worker account.'
+    # For same-domain deployments, the existing HTTP challenge route already works.
+    if [[ "$DOMAIN" != $(state_get domain) || ! -f "$NGINX_SITE" ]]; then
+        nginx_http > "$NGINX_ACME"
+        run_quiet 'Validate HTTP challenge virtual host' /usr/sbin/nginx -t
+        if systemctl is-active --quiet nginx; then systemctl reload nginx; else systemctl enable --now nginx >/dev/null; fi
+    fi
+    ensure_certificate
+    php_fpm_pool "$nginx_user" > "$FPM_POOL"
     run_quiet 'Validate PHP-FPM pool' /usr/sbin/php-fpm8.4 -t
 }
 

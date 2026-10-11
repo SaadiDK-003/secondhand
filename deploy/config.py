@@ -38,6 +38,8 @@ REQUIRED_SETTINGS = {
     "MAIL_HOST", "MAIL_PORT", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_FROM_ADDRESS",
 }
 CLOUD_SETTINGS = {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION", "AWS_BUCKET"}
+SECRET_SETTINGS = {"APP_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "MAIL_USERNAME",
+                   "MAIL_PASSWORD", "SENTRY_LARAVEL_DSN", "MEILISEARCH_KEY", "REDIS_PASSWORD", "DB_PASSWORD"}
 
 
 def domain(value):
@@ -392,9 +394,9 @@ def main():
     elif args.command == "redact":
         text = sys.stdin.read()
         values = [state.get(key, "") for key in ("db_password", "redis_password", "meili_key")]
-        values += [v for k, v in state.get("settings", {}).items() if re.search("KEY|SECRET|PASSWORD|USERNAME|DSN", k)]
+        values += [v for k, v in state.get("settings", {}).items() if k in SECRET_SETTINGS]
         if args.input:
-            values += list(parse_env(args.input).values())
+            values += [v for k, v in parse_env(args.input).items() if k in SECRET_SETTINGS]
         for value in sorted(filter(None, values), key=len, reverse=True):
             text = text.replace(value, "[REDACTED]")
         text = re.sub(r"(https?://)[^\s/@]+:[^\s/@]+@", r"\1[REDACTED]@", text)

@@ -193,6 +193,25 @@ class DeploymentConfigurationTests(unittest.TestCase):
         self.assertEqual('false', config.parse_env(path)['APP_DEBUG'])
         self.assertNotIn('secret', path.read_text())
 
+    def test_log_redaction_preserves_error_paths_and_numbers_but_removes_credentials(self):
+        state = self.state()
+        state_path = self.root / 'state'
+        config.atomic_write(state_path, json.dumps(state))
+        path = self.root / '.env'
+        config.write_env(state, state['domain'], path)
+        message = ('/etc/php/8.4/fpm/pool.d/secondhand.conf:1 value is NULL\n'
+                   'JIT disabled; built in 2.39s; SMTP authentication: OK\n'
+                   + state['db_password'] + ' secret user base64:' + 'a' * 43 + '=\n')
+        result = subprocess.run([os.environ.get('PYTHON_BINARY', __import__('sys').executable),
+                                 str(ROOT / 'deploy/config.py'), 'redact', '--state', str(state_path),
+                                 '--input', str(path)], input=message, text=True, capture_output=True, check=True)
+        self.assertIn('/etc/php/8.4/fpm/pool.d/secondhand.conf:1 value is NULL', result.stdout)
+        self.assertIn('built in 2.39s; SMTP authentication: OK', result.stdout)
+        self.assertNotIn(state['db_password'], result.stdout)
+        self.assertNotIn('secret', result.stdout)
+        self.assertNotIn(' user ', result.stdout)
+        self.assertNotIn(state['settings']['APP_KEY'], result.stdout)
+
     def test_production_env_uses_persistent_private_ports_and_escapes_secrets(self):
         state = self.state()
         state["settings"]["MAIL_PASSWORD"] = 'literal$HOME "quote" \\ backtick`'
