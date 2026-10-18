@@ -12,18 +12,24 @@ import { store } from '@/routes/register';
 
 defineProps<{
     passwordRules: string;
+    status?: string;
 }>();
 
 defineOptions({
     layout: {
         title: 'Create an account',
-        description: 'Enter your details below to create your account',
+        description:
+            'Create your account, then activate it with the code sent to your email.',
     },
 });
 </script>
 
 <template>
     <Head title="Register" />
+
+    <p v-if="status" role="status" class="mb-4 text-sm text-muted-foreground">
+        {{ status }}
+    </p>
 
     <Form
         v-bind="store.form()"

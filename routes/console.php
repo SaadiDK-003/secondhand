@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schedule;
 
 Schedule::job(new ExpireListings)->everyFiveMinutes()->withoutOverlapping();
+Schedule::command('accounts:prune-unverified')->everyMinute()->withoutOverlapping();
 Schedule::command('horizon:snapshot')->everyFiveMinutes()->when(fn (): bool => config('queue.default') === 'redis');
 Schedule::call(fn () => Cache::put(SiteHealth::HEARTBEAT_KEY, now()->getTimestamp(), now()->addDay()))
     ->name('site-health-heartbeat')->everyMinute();

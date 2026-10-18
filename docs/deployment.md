@@ -68,6 +68,14 @@ Deployment uses a short maintenance window for migrations and replacing applicat
 
 If a deployment is forcibly killed or the VPS loses power, inspect the log and rerun the same command. Temporary package-start suppression may need removal from `/usr/sbin/policy-rc.d` **only if its contents are exactly the script's `#!/bin/sh` followed by `exit 101`**; preserve any pre-existing policy. A saved `run.*/createcluster.conf` contains the original PostgreSQL cluster-creation configuration if installation was interrupted. Normal errors/signals clean these up automatically. An older release-based installation is rejected instead of overwritten; migrate it explicitly if one exists.
 
+## Email activation
+
+New registrations must enter a six-digit email code before accessing account features. The code is hashed in the database; queued activation notifications are encrypted. The backend enforces a five-minute interval between emails and five code attempts per minute per account. Resending invalidates the previous code and never extends the original one-hour registration deadline.
+
+The scheduler runs `accounts:prune-unverified` every minute, deleting only new, still-unverified registrations whose one-hour deadline has passed (normally within a minute of expiry). Verified users, pre-existing users and established accounts changing email are not automatically deleted. Pre-existing users without verified email must confirm their address once; the activation screen lets them request a code. Email changes also require verification of the new address.
+
+Deploy normally to apply the migration. Keep `secondhand-horizon.service` and `secondhand-scheduler.timer` active: Horizon delivers activation emails through the existing SMTP settings, and the scheduler performs cleanup. Verify actual inbox delivery and the activation/resend flow with a new test registration before launch. `sudo -u secondhand /usr/bin/php8.4 artisan accounts:prune-unverified` runs cleanup manually when needed. Verification confirms email ownership, not the truth of a person's name or phone number.
+
 ## Admin navigation and site health
 
 After signing in as an administrator, use **Admin panel** in the marketplace account menu. The admin top bar, sidebar and account menu each include **View marketplace** to return to the public site. Admin and Horizon access still require an active administrator and a confirmed two-factor login.

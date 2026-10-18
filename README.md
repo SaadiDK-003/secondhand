@@ -360,6 +360,10 @@ Native Vite defaults to loopback. Docker retains its explicit internal bind over
 
 Validation: all 192 tests passed (1,632 assertions), with live SSR/Meilisearch and no skips, including 27 new input/injection cases. PHPStan, Pint, frontend formatting/lint, TypeScript and client/SSR builds passed. A real HTTP malformed-search request returned 422 without SQL/PDO details. The existing upstream Inertia sourcemap warning remains. No known injection path was found in the reviewed application code; this is not a guarantee of complete security. Production controls and independent penetration testing remain on the launch checklist.
 
+## Email activation — 2026-10-18
+
+New registrations remain pending until a six-digit emailed code is verified. Codes expire within one hour, resends have a server-enforced five-minute cooldown, and each resend invalidates the previous code without extending the original registration deadline. Account features (including administration) require a verified email. The scheduler deletes expired new registrations every minute; established accounts are excluded from automatic deletion. Existing unverified users and users changing email can request a code from the activation screen. Keep the queue workers, scheduler and SMTP delivery working; see [deployment instructions](docs/deployment.md#email-activation).
+
 ## Native deployment automation — 2026-10-10
 
 Added a Ubuntu deploy command, safe production-settings parsing, optional remembered domains, certificate handling and pre-migration backups. Deployment uses one application directory; release archives and rollback/recovery commands were removed at the user's request. Laravel Horizon 5.50 supplies Redis worker supervision and queue visibility required by the brief. Its dashboard/API require an active administrator with confirmed session 2FA, including in local environments. A `deploy:health --storage` command checks service connectivity and a temporary private-object roundtrip without sending email or printing credentials.

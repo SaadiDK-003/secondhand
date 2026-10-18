@@ -2,10 +2,12 @@
 
 namespace App\Models;
 
+use App\Actions\EmailActivation;
 use Carbon\CarbonImmutable;
 use Database\Factories\UserFactory;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -30,17 +32,26 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property CarbonImmutable|null $suspended_at
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
+ * @property CarbonImmutable|null $registration_expires_at
+ * @property string|null $email_activation_code_hash
+ * @property CarbonImmutable|null $email_activation_expires_at
+ * @property CarbonImmutable|null $email_activation_sent_at
  */
 #[Fillable(['name', 'email', 'mobile_number', 'password'])]
-#[Hidden(['profile_photo_disk', 'profile_photo_path', 'mobile_number', 'password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token', 'suspension_reason'])]
-class User extends Authenticatable implements FilamentUser
+#[Hidden(['profile_photo_disk', 'profile_photo_path', 'mobile_number', 'password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token', 'suspension_reason', 'email_activation_code_hash', 'email_activation_expires_at', 'email_activation_sent_at', 'registration_expires_at'])]
+class User extends Authenticatable implements FilamentUser, MustVerifyEmail
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable, TwoFactorAuthenticatable;
 
+    public function sendEmailVerificationNotification(): void
+    {
+        app(EmailActivation::class)->send($this);
+    }
+
     public function hasAdminSession(): bool
     {
-        return $this->is_admin && $this->suspended_at === null && $this->two_factor_confirmed_at !== null && $this->two_factor_secret !== null
+        return $this->hasVerifiedEmail() && $this->is_admin && $this->suspended_at === null && $this->two_factor_confirmed_at !== null && $this->two_factor_secret !== null
             && session('admin_2fa') === $this->id.':'.hash('sha256', $this->two_factor_secret);
     }
 
@@ -82,6 +93,9 @@ class User extends Authenticatable implements FilamentUser
             'is_admin' => 'boolean',
             'suspended_at' => 'immutable_datetime',
             'email_verified_at' => 'datetime',
+            'registration_expires_at' => 'immutable_datetime',
+            'email_activation_expires_at' => 'immutable_datetime',
+            'email_activation_sent_at' => 'immutable_datetime',
             'password' => 'hashed',
             'two_factor_confirmed_at' => 'datetime',
         ];

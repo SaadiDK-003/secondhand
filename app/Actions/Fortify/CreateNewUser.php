@@ -30,11 +30,14 @@ class CreateNewUser implements CreatesNewUsers
             'mobile_number' => ['bail', 'required', 'string', 'max:13', 'regex:/^\\+923[0-9]{9}$/', 'unique:users,mobile_number'],
         ])->validate();
 
-        return User::create([
+        $user = new User([
             'name' => $input['name'],
             'email' => $input['email'],
             'mobile_number' => $input['mobile_number'],
             'password' => $input['password'],
         ]);
+        $user->forceFill(['registration_expires_at' => now()->addHour()])->save();
+
+        return $user;
     }
 }

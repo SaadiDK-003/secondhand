@@ -16,7 +16,7 @@ class MobileAuthenticationTest extends TestCase
     public function test_registration_normalizes_mobile_and_hashes_password(): void
     {
         $this->post(route('register.store'), $this->registration())
-            ->assertSessionHasNoErrors()->assertRedirect('/dashboard');
+            ->assertSessionHasNoErrors()->assertRedirect('/email/verify');
 
         $user = User::where('email', 'buyer@example.com')->firstOrFail();
         $this->assertSame('+923001234567', $user->mobile_number);

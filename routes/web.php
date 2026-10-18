@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Auth\EmailActivationController;
 use App\Http\Controllers\BlockedUserController;
 use App\Http\Controllers\BrowseController;
 use App\Http\Controllers\ConversationController;
@@ -16,6 +17,12 @@ use App\Models\Listing;
 use App\Services\ListingPresenter;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
+
+Route::middleware('auth')->group(function (): void {
+    Route::get('/email/verify', [EmailActivationController::class, 'show'])->name('verification.notice');
+    Route::post('/email/verify', [EmailActivationController::class, 'verify'])->middleware('throttle:activation-code')->name('verification.verify');
+    Route::post('/email/verification-notification', [EmailActivationController::class, 'send'])->middleware('throttle:6,1,activation-send')->name('verification.send');
+});
 
 Route::middleware('auth')->group(function (): void {
     Route::get('/messages', [ConversationController::class, 'index'])->name('messages.index');

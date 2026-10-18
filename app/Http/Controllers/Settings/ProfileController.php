@@ -36,6 +36,11 @@ class ProfileController extends Controller
 
         if ($request->user()->isDirty('email')) {
             $request->user()->email_verified_at = null;
+            $request->user()->forceFill([
+                'email_activation_code_hash' => null,
+                'email_activation_sent_at' => null,
+                'email_activation_expires_at' => null,
+            ]);
         }
 
         $request->user()->save();

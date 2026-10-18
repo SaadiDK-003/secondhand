@@ -19,6 +19,23 @@ class EnsureActiveUser
             abort(403, 'This account is unavailable.');
         }
 
+        if ($user && ! $user->hasVerifiedEmail()) {
+            if ($user->registration_expires_at && ! $user->registration_expires_at->isFuture()) {
+                Auth::logout();
+                $request->session()->invalidate();
+                $request->session()->regenerateToken();
+
+                return redirect()->route('register')->with('status', 'Your registration expired. Please register again.');
+            }
+            if (! $request->routeIs('verification.*', 'logout')) {
+                if ($request->expectsJson()) {
+                    abort(403, 'Activate your email address before using your account.');
+                }
+
+                return redirect()->route('verification.notice');
+            }
+        }
+
         return $next($request);
     }
 }

@@ -85,8 +85,9 @@ class FortifyServiceProvider extends ServiceProvider
             'status' => $request->session()->get('status'),
         ]));
 
-        Fortify::registerView(fn () => Inertia::render('auth/Register', [
+        Fortify::registerView(fn (Request $request) => Inertia::render('auth/Register', [
             'passwordRules' => Password::defaults()->toPasswordRulesString(),
+            'status' => $request->session()->get('status'),
         ]));
 
         Fortify::twoFactorChallengeView(fn () => Inertia::render('auth/TwoFactorChallenge'));
@@ -115,6 +116,8 @@ class FortifyServiceProvider extends ServiceProvider
      */
     private function configureRateLimiting(): void
     {
+        RateLimiter::for('activation-code', fn (Request $request) => Limit::perMinute(5)->by((string) $request->user()?->id));
+
         RateLimiter::for('registration', function (Request $request) {
             return $request->isMethod('post') && $request->routeIs('register.store')
                 ? Limit::perMinute(5)->by($request->ip())
